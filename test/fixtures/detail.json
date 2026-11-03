@@ -1,0 +1,71 @@
+{
+ "is_lock": false,
+ "is_login": false,
+ "is_mobile_bind": false,
+ "is_vip": false,
+ "comic": {
+  "uuid": "09a2dfcd-bafb-11f1-b61d-fa163e02432f",
+  "b_404": false,
+  "b_hidden": false,
+  "ban": 0,
+  "name": "有點粘人的假小子女友",
+  "alias": "有点粘人的假小子女友,御家かえる短篇系列,御家かえる短篇系列",
+  "path_word": "youdiannianrendejiaxiaozinvyou",
+  "close_comment": false,
+  "close_roast": false,
+  "free_type": {
+   "display": "免費",
+   "value": 1
+  },
+  "restrict": {
+   "value": 0,
+   "display": "一般向(免費)"
+  },
+  "reclass": {
+   "value": 1,
+   "display": "漫畫Manga"
+  },
+  "females": [],
+  "males": [],
+  "clubs": [],
+  "seo_baidu": "有點粘人的假小子女友",
+  "region": {
+   "value": 0,
+   "display": "日本"
+  },
+  "status": {
+   "value": 0,
+   "display": "連載中"
+  },
+  "author": [
+   {
+    "name": "御家かえる",
+    "path_word": "yujiakaeru"
+   }
+  ],
+  "theme": [
+   {
+    "name": "愛情",
+    "path_word": "aiqing"
+   }
+  ],
+  "parodies": [],
+  "brief": "有點粘人的假小子女友",
+  "datetime_updated": "2026-11-02",
+  "cover": "https://sy.mangafunb.fun/y/youdiannianrendejiaxiaozinvyou/cover/1790572286.jpg.328x422.jpg",
+  "last_chapter": {
+   "uuid": "cc8559e8-d694-11f1-bcb7-fa163e02432f",
+   "name": "16-好热！"
+  },
+  "popular": 52772,
+  "channel": null
+ },
+ "popular": 52772,
+ "groups": {
+  "default": {
+   "path_word": "default",
+   "count": 16,
+   "name": "默認"
+  }
+ }
+}

@@ -1,0 +1,101 @@
+{
+ "code": 200,
+ "message": "请求成功",
+ "results": {
+  "total": 56220,
+  "list": [
+   {
+    "name": "夕凜的忠犬君",
+    "path_word": "xilingjiang",
+    "free_type": null,
+    "females": [],
+    "males": [],
+    "author": [
+     {
+      "name": "雅鳳みゃと",
+      "path_word": "雅鳳みゃと"
+     }
+    ],
+    "author_alias": "雅鳳みゃと",
+    "theme": [],
+    "cover": "https://sx.mangafunb.fun/x/xilingjiang/cover/1786945975.jpg.328x422.jpg",
+    "popular": 3077,
+    "datetime_updated": "2026-11-03"
+   },
+   {
+    "name": "宵待步行",
+    "path_word": "xiaodaibuxing",
+    "free_type": null,
+    "females": [],
+    "males": [],
+    "author": [
+     {
+      "name": "有子瑶一",
+      "path_word": "有子瑶一"
+     }
+    ],
+    "author_alias": "有子瑶一",
+    "theme": [],
+    "cover": "https://sx.mangafunb.fun/x/xiaodaibuxing/cover/1793637883.jpg.328x422.jpg",
+    "popular": 109,
+    "datetime_updated": "2026-11-03"
+   },
+   {
+    "name": "要不先來杯下午茶吧？",
+    "path_word": "yaobuxianlaibeixiawuchaba",
+    "free_type": null,
+    "females": [],
+    "males": [],
+    "author": [
+     {
+      "name": "mato",
+      "path_word": "mato"
+     }
+    ],
+    "author_alias": "mato",
+    "theme": [],
+    "cover": "https://sy.mangafunb.fun/y/yaobuxianlaibeixiawuchaba/cover/1793637773.jpg.328x422.jpg",
+    "popular": 116,
+    "datetime_updated": "2026-11-03"
+   },
+   {
+    "name": "(C108) CHU",
+    "path_word": "chugdyg",
+    "free_type": null,
+    "females": [],
+    "males": [],
+    "author": [
+     {
+      "name": "くらげもどき",
+      "path_word": "くらげもどき"
+     }
+    ],
+    "author_alias": "くらげもどき",
+    "theme": [],
+    "cover": "https://sc.mangafunb.fun/c/chugdyg/cover/1793637416.jpg.328x422.jpg",
+    "popular": 128,
+    "datetime_updated": "2026-11-03"
+   },
+   {
+    "name": "VISIONS ILLUSTRATORS BOOK",
+    "path_word": "visionsillustratorsbook",
+    "free_type": null,
+    "females": [],
+    "males": [],
+    "author": [
+     {
+      "name": "多人",
+      "path_word": "多人"
+     }
+    ],
+    "author_alias": "多人",
+    "theme": [],
+    "cover": "https://sv.mangafunb.fun/v/visionsillustratorsbook/cover/1793636882.jpg.328x422.jpg",
+    "popular": 124,
+    "datetime_updated": "2026-11-03"
+   }
+  ],
+  "limit": 5,
+  "offset": 0
+ }
+}

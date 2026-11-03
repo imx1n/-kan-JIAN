@@ -1,0 +1,96 @@
+{
+ "code": 200,
+ "message": "请求成功",
+ "results": {
+  "list": [
+   {
+    "name": "CROWS海賊版",
+    "alias": "CROWS海贼版",
+    "path_word": "crowshaizeiban",
+    "cover": "https://sc.mangafunb.fun/c/crowshaizeiban/cover/1759152718.jpg.328x422.jpg",
+    "ban": 0,
+    "author": [
+     {
+      "name": "高桥ヒロシ",
+      "alias": "高桥ヒロシ(高桥弘),高橋ヒロシ",
+      "path_word": "gaoqiao"
+     }
+    ],
+    "popular": 458
+   },
+   {
+    "name": "暴力宇宙海賊：亞空之深淵",
+    "alias": "迷你裙宇宙海贼：亚空之深渊,暴力宇宙海賊：亞空之深淵,暴力宇宙海贼：亚空之深渊",
+    "path_word": "baoliyuzhouhaizei",
+    "cover": "https://sb.mangafunb.fun/b/baoliyuzhouhaizei/cover/1650983423.jpg.328x422.jpg",
+    "ban": 0,
+    "author": [
+     {
+      "name": "ちび丸",
+      "alias": "ちび丸",
+      "path_word": "chibimalu"
+     },
+     {
+      "name": "笹本祐一",
+      "alias": "笹本祐一",
+      "path_word": "shibenyouyi"
+     }
+    ],
+    "popular": 351
+   },
+   {
+    "name": "海贼王",
+    "alias": "海盗王,OP,航海王,ONE PIECE,海贼王,海贼王,海賊王,海賊王",
+    "path_word": "haizeiwang",
+    "cover": "https://sh.mangafunb.fun/h/haizeiwang/cover/1651422982.jpg.328x422.jpg",
+    "ban": 2,
+    "author": [
+     {
+      "name": "尾田栄一郎",
+      "alias": "尾田荣一郎",
+      "path_word": "weitianrongyilang"
+     }
+    ],
+    "popular": 13084371
+   },
+   {
+    "name": "海贼王盛宴",
+    "alias": "海贼盛宴,One piece party,海賊王盛宴",
+    "path_word": "haizeishengyan",
+    "cover": "https://sh.mangafunb.fun/h/haizeishengyan/cover/1651387491.jpg.328x422.jpg",
+    "ban": 0,
+    "author": [
+     {
+      "name": "尾田荣一郎",
+      "alias": "尾田荣一郎",
+      "path_word": "wtryl"
+     },
+     {
+      "name": "安藤英",
+      "alias": "安藤英",
+      "path_word": "anty"
+     }
+    ],
+    "popular": 34458
+   },
+   {
+    "name": "海賊王 艾斯",
+    "alias": "海賊王 艾斯,海贼王 艾斯",
+    "path_word": "haizeiwangaisi",
+    "cover": "https://sh.mangafunb.fun/h/haizeiwangaisi/cover/1651201178.jpg.328x422.jpg",
+    "ban": 0,
+    "author": [
+     {
+      "name": "Boichi",
+      "alias": null,
+      "path_word": "boichi"
+     }
+    ],
+    "popular": 37109
+   }
+  ],
+  "total": 34,
+  "limit": 5,
+  "offset": 0
+ }
+}

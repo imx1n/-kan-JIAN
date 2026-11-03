@@ -1,0 +1,44 @@
+{
+ "is_lock": false,
+ "is_login": false,
+ "is_mobile_bind": false,
+ "is_vip": false,
+ "comic": {
+  "name": "有點粘人的假小子女友",
+  "uuid": "09a2dfcd-bafb-11f1-b61d-fa163e02432f",
+  "path_word": "youdiannianrendejiaxiaozinvyou",
+  "restrict": {
+   "value": 0,
+   "display": "一般向(免費)"
+  }
+ },
+ "chapter": {
+  "index": 0,
+  "uuid": "1de602ec-bafb-11f1-ad1f-fa163e02432f",
+  "count": 16,
+  "ordered": 10,
+  "size": 3,
+  "name": "1-有点粘人的假小子女友",
+  "comic_id": "09a2dfcd-bafb-11f1-b61d-fa163e02432f",
+  "comic_path_word": "youdiannianrendejiaxiaozinvyou",
+  "group_id": null,
+  "group_path_word": "default",
+  "type": 1,
+  "news": "success",
+  "datetime_created": "2026-09-28",
+  "prev": null,
+  "next": "248cb464-bafb-11f1-b1a9-fa163e02432f",
+  "contents": [
+   {
+    "url": "https://sy.mangafunb.fun/y/youdiannianrendejiaxiaozinvyou/169f5/1790572595850001.jpg.h1500x.jpg"
+   },
+   {
+    "url": "https://sy.mangafunb.fun/y/youdiannianrendejiaxiaozinvyou/169f5/1790572597330003.jpg.h1500x.jpg"
+   },
+   {
+    "url": "https://sy.mangafunb.fun/y/youdiannianrendejiaxiaozinvyou/169f5/1790572598390002.jpg.h1500x.jpg"
+   }
+  ],
+  "is_long": false
+ }
+}

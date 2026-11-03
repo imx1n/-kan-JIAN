@@ -1,0 +1,135 @@
+{
+ "code": 200,
+ "message": "请求成功",
+ "results": {
+  "list": [
+   {
+    "sort": 1,
+    "sort_last": 1,
+    "rise_sort": 0,
+    "rise_num": 125840,
+    "date_type": 1,
+    "popular": 15369306,
+    "comic": {
+     "name": "腦洞學生會",
+     "path_word": "naoodngxueshenghui",
+     "females": [],
+     "males": [],
+     "author": [
+      {
+       "name": "むちまろ",
+       "path_word": "mucimalo"
+      }
+     ],
+     "theme": [],
+     "cover": "https://sn.mangafunb.fun/n/naoodngxueshenghui/cover/1785949380.jpg.328x422.jpg",
+     "popular": 15369521,
+     "author_alias": "むちまろ"
+    }
+   },
+   {
+    "sort": 2,
+    "sort_last": 4,
+    "rise_sort": 2,
+    "rise_num": 25089,
+    "date_type": 1,
+    "popular": 44997592,
+    "comic": {
+     "name": "迷宮干",
+     "path_word": "xsjzmwls",
+     "females": [],
+     "males": [],
+     "author": [
+      {
+       "name": "雷巴",
+       "path_word": "leiba"
+      }
+     ],
+     "theme": [],
+     "cover": "https://sx.mangafunb.fun/x/xsjzmwls/cover/1716519355.png.328x422.jpg",
+     "popular": 44998130,
+     "author_alias": "雷巴"
+    }
+   },
+   {
+    "sort": 3,
+    "sort_last": 5,
+    "rise_sort": 2,
+    "rise_num": 21665,
+    "date_type": 1,
+    "popular": 1257992,
+    "comic": {
+     "name": "在黃油世界過起慢生活",
+     "path_word": "zaihuangyoushijieguomanshenghuo",
+     "females": [],
+     "males": [],
+     "author": [
+      {
+       "name": "白石新",
+       "path_word": "baishixin"
+      },
+      {
+       "name": "ツタロー",
+       "path_word": "tsutaro"
+      }
+     ],
+     "theme": [],
+     "cover": "https://sz.mangafunb.fun/z/zaihuangyoushijieguomanshenghuo/cover/1713620678.png.328x422.jpg",
+     "popular": 1258072,
+     "author_alias": "白石新,ツタロー"
+    }
+   },
+   {
+    "sort": 4,
+    "sort_last": 3,
+    "rise_sort": -1,
+    "rise_num": 19311,
+    "date_type": 1,
+    "popular": 583850,
+    "comic": {
+     "name": "妹妹是知道的",
+     "path_word": "mmszdd",
+     "females": [],
+     "males": [],
+     "author": [
+      {
+       "name": "雁木万里",
+       "path_word": "yanmuwanli"
+      }
+     ],
+     "theme": [],
+     "cover": "https://sm.mangafunb.fun/m/mmszdd/cover/1735606552.jpg.328x422.jpg",
+     "popular": 584124,
+     "author_alias": "雁木万里"
+    }
+   },
+   {
+    "sort": 5,
+    "sort_last": 98,
+    "rise_sort": 93,
+    "rise_num": 16975,
+    "date_type": 1,
+    "popular": 11574244,
+    "comic": {
+     "name": "邪靈附體",
+     "path_word": "satanophany",
+     "females": [],
+     "males": [],
+     "author": [
+      {
+       "name": "山田惠庸",
+       "path_word": "shantianhuiyong"
+      }
+     ],
+     "theme": [],
+     "cover": "https://ss.mangafunb.fun/s/satanophany/cover/1733120263.jpg.328x422.jpg",
+     "popular": 11574276,
+     "author_alias": "山田惠庸"
+    }
+   }
+  ],
+  "total": 198,
+  "limit": 5,
+  "offset": 0
+ }
+}
