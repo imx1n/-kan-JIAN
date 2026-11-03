@@ -1,0 +1,53 @@
+# iOS 安装包：在 macOS 上构建未签名的 IPA。
+# 手动运行时只上传为构建产物；发布 Release 时同时附到该 Release，应用内更新据此识别 iOS 新版本。
+name: iOS IPA
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.9
+          channel: stable
+          cache: true
+
+      - run: xcodebuild -version
+      - run: flutter pub get
+      - run: flutter test
+
+      - name: 构建（不签名）
+        run: flutter build ios --release --no-codesign
+
+      - name: 打包 IPA
+        run: |
+          version=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
+          ipa="kanjian-v$version-unsigned.ipa"
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          (cd build/ipa && zip -qry "../$ipa" Payload)
+          echo "IPA=build/$ipa" >> "$GITHUB_ENV"
+          shasum -a 256 "build/$ipa"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: kanjian-ios
+          path: ${{ env.IPA }}
+          if-no-files-found: error
+
+      - name: 附到 Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$IPA" --clobber

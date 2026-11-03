@@ -126,7 +126,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('发现新版本 v0.3.0'), findsOneWidget);
-    expect(find.textContaining('APK 18.4 MB'), findsOneWidget);
+    expect(find.textContaining('安装包 18.4 MB'), findsOneWidget);
     expect(find.textContaining('• 阅读器新增省流画质'), findsOneWidget);
     expect(find.text('下载'), findsOneWidget);
 

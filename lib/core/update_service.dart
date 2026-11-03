@@ -13,8 +13,8 @@ class AppRelease {
     required this.title,
     required this.notes,
     required this.pageUrl,
-    this.apkUrl,
-    this.apkSize,
+    this.packageUrl,
+    this.packageSize,
     this.publishedAt,
   });
 
@@ -24,21 +24,24 @@ class AppRelease {
   final String title;
   final String notes;
   final String pageUrl;
-  final String? apkUrl;
-  final int? apkSize;
+
+  /// 当前平台的安装包（Android 为 .apk，iOS 为 .ipa）。
+  final String? packageUrl;
+  final int? packageSize;
   final DateTime? publishedAt;
 
-  /// 下载地址：有 APK 附件就直接下载，否则打开 Release 页面。
-  String get downloadUrl => apkUrl ?? pageUrl;
+  /// 下载地址：有安装包附件就直接下载，否则打开 Release 页面。
+  String get downloadUrl => packageUrl ?? pageUrl;
 
   /// 解析 `GET /repos/{owner}/{repo}/releases/latest` 的响应；不是合法版本号时返回 null。
-  static AppRelease? fromJson(Map<String, dynamic> j) {
+  /// [ext] 为当前平台安装包的扩展名。
+  static AppRelease? fromJson(Map<String, dynamic> j, {String ext = '.apk'}) {
     final tag = (j['tag_name'] ?? '').toString().trim();
     final version = normalizeVersion(tag);
     if (version == null) return null;
     final assets = (j['assets'] is List ? j['assets'] as List : const [])
         .whereType<Map>()
-        .where((a) => (a['name'] ?? '').toString().toLowerCase().endsWith('.apk'))
+        .where((a) => (a['name'] ?? '').toString().toLowerCase().endsWith(ext))
         .toList();
     // 多个 APK 时优先通用包，其次 arm64（真机最常见）。
     assets.sort((a, b) => _apkRank(a['name'].toString()).compareTo(_apkRank(b['name'].toString())));
@@ -49,8 +52,8 @@ class AppRelease {
       title: (j['name'] ?? '').toString().trim().isEmpty ? tag : j['name'].toString().trim(),
       notes: (j['body'] ?? '').toString().trim(),
       pageUrl: (j['html_url'] ?? AppConfig.githubPage).toString(),
-      apkUrl: apk?['browser_download_url']?.toString(),
-      apkSize: apk?['size'] is int ? apk!['size'] as int : null,
+      packageUrl: apk?['browser_download_url']?.toString(),
+      packageSize: apk?['size'] is int ? apk!['size'] as int : null,
       publishedAt: DateTime.tryParse((j['published_at'] ?? '').toString())?.toLocal(),
     );
   }
@@ -115,12 +118,15 @@ class UpdateService {
   @visibleForTesting
   set currentForTest(String v) => _current = v;
 
+  /// iOS 只认带 .ipa 附件的版本，避免把只发了 APK 的版本推给 iOS 用户。
+  static bool get _ios => defaultTargetPlatform == TargetPlatform.iOS;
+
   Future<UpdateResult> check() async {
     final current = await currentVersion();
     try {
       final res = await _dio.get<Object>(AppConfig.releasesApi);
       ReaderPrefs.instance.lastUpdateCheck = DateTime.now().millisecondsSinceEpoch;
-      return resolve(res.statusCode ?? 0, res.data, current);
+      return resolve(res.statusCode ?? 0, res.data, current, ext: _ios ? '.ipa' : '.apk', requirePackage: _ios);
     } on DioException catch (e) {
       final msg = switch (e.type) {
         DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout => '连接 GitHub 超时，请检查网络或代理',
@@ -131,7 +137,8 @@ class UpdateService {
   }
 
   /// 根据 HTTP 状态和响应体得出结论（单独拿出来便于测试）。
-  static UpdateResult resolve(int status, Object? body, String current) {
+  /// [requirePackage] 为 true 时，新版本没有对应安装包就视为“已是最新”。
+  static UpdateResult resolve(int status, Object? body, String current, {String ext = '.apk', bool requirePackage = false}) {
     if (status == 404) {
       return UpdateResult(UpdateStatus.noRelease, current: current, message: '仓库还没有发布版本');
     }
@@ -141,15 +148,15 @@ class UpdateService {
     if (status != 200 || body is! Map) {
       return UpdateResult(UpdateStatus.failed, current: current, message: 'GitHub 返回异常（HTTP $status）');
     }
-    final release = AppRelease.fromJson(Map<String, dynamic>.from(body));
+    final release = AppRelease.fromJson(Map<String, dynamic>.from(body), ext: ext);
     if (release == null) {
       return UpdateResult(UpdateStatus.failed, current: current, message: '最新 Release 的标签不是版本号');
     }
-    return UpdateResult(
-      compareVersions(release.version, current) > 0 ? UpdateStatus.available : UpdateStatus.upToDate,
-      current: current,
-      release: release,
-    );
+    final newer = compareVersions(release.version, current) > 0;
+    if (newer && requirePackage && release.packageUrl == null) {
+      return UpdateResult(UpdateStatus.upToDate, current: current, release: release, message: 'v${release.version} 还没有本平台的安装包');
+    }
+    return UpdateResult(newer ? UpdateStatus.available : UpdateStatus.upToDate, current: current, release: release);
   }
 
   /// 启动时自动检查：24 小时内只查一次；有新版本且没被跳过时返回结果，否则返回 null。

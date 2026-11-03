@@ -180,9 +180,11 @@ class ComicDetail {
   }
 }
 
-/// 章节名里没有“话/話/卷”的条目（贺图、番外、特典）标「特别篇」，含“通知/公告”的标「公告」。名称本身不改。
+/// 章节名里没有“话/話/卷”的条目（贺图、番外、特典）标「特别篇」，含“通知/公告”的标「公告」，
+/// 重新绘制的版本标「重绘」。名称本身不改。
 String chapterTag(String name) {
   if (RegExp('通知|公告').hasMatch(name)) return '公告';
+  if (RegExp('重画|重畫|重绘|重繪').hasMatch(name)) return '重绘';
   if (!RegExp('[话話卷回]').hasMatch(name)) return '特别篇';
   return '';
 }

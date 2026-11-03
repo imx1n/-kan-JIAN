@@ -22,7 +22,7 @@ Future<void> showUpdateDialog(BuildContext context, UpdateResult r) {
   final release = r.release!;
   final meta = [
     '当前 v${r.current}',
-    if (release.apkSize != null) 'APK ${formatBytes(release.apkSize!)}',
+    if (release.packageSize != null) '安装包 ${formatBytes(release.packageSize!)}',
     if (release.publishedAt != null) '${release.publishedAt!.month}月${release.publishedAt!.day}日发布',
   ].join(' · ');
   final notes = plainNotes(release.notes);
@@ -54,9 +54,9 @@ Future<void> showUpdateDialog(BuildContext context, UpdateResult r) {
             ]),
           ),
         ),
-        if (release.apkUrl == null) ...[
+        if (release.packageUrl == null) ...[
           const SizedBox(height: 10),
-          const Text('这个版本没有附带 APK，将打开 Release 页面。', style: TextStyle(fontSize: 12, color: Palette.ink3)),
+          const Text('这个版本没有附带安装包，将打开 Release 页面。', style: TextStyle(fontSize: 12, color: Palette.ink3)),
         ],
       ]),
       actionsAlignment: MainAxisAlignment.spaceBetween,

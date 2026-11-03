@@ -12,8 +12,10 @@
 
 ## 下载
 
-在 [Releases](https://github.com/luminacry/-kan-JIAN/releases) 下载最新的 APK。需要 Android 7.0 及以上。
-。
+在 [Releases](https://github.com/luminacry/-kan-JIAN/releases) 下载：
+
+- **Android**：`kanjian-vX.Y.Z.apk`，需要 Android 7.0 及以上。
+- **iOS**：`kanjian-vX.Y.Z-unsigned.ipa`，需要 iOS 26 及以上。安装包未签名，用 Sideloadly、AltStore 等工具以自己的 Apple ID 签名后安装。
 
 ## 构建
 
@@ -26,9 +28,11 @@ flutter test
 flutter build apk --release
 ```
 
-正式版签名读取 `android/key.properties`，这个文件不在仓库里；没有它时会用 debug 签名打包。
+Android 正式版签名读取 `android/key.properties`，这个文件不在仓库里；没有它时会用 debug 签名打包。
 
-发布新版本：先修改 `pubspec.yaml` 的 `version`，再新建 tag 为 `vX.Y.Z` 的 Release，并附上 APK。应用会据此提示用户更新。
+iOS 安装包由 GitHub Actions 在 macOS 上构建（`.github/workflows/ios-ipa.yml`），也可以在本机用 `flutter build ios --release --no-codesign` 构建。
+
+发布新版本：先修改 `pubspec.yaml` 的 `version`，再新建 tag 为 `vX.Y.Z` 的 Release 并附上 APK；工作流会自动把 IPA 附到同一个 Release。应用会据此提示用户更新。
 
 ## 声明
 

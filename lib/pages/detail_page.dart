@@ -24,6 +24,7 @@ class _DetailPageState extends State<DetailPage> {
   final _store = LibraryStore.instance;
   late final _browser = ChapterBrowser(widget.comic.pathWord);
   final _currentKey = GlobalKey();
+  final _firstKey = GlobalKey();
   ComicDetail? _detail;
   String? _error;
   bool _briefOpen = false;
@@ -58,10 +59,11 @@ class _DetailPageState extends State<DetailPage> {
     _refresh();
     if (_pendingLocate && !_browser.loading && _browser.items != null) {
       _pendingLocate = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final ctx = _currentKey.currentContext;
-        if (ctx != null) Scrollable.ensureVisible(ctx, alignment: .35, duration: const Duration(milliseconds: 250));
-      });
+      final uuid = _store.entry(_pw)?.chapterUuid;
+      final index = _browser.items!.indexWhere((c) => c.uuid == uuid);
+      if (index >= 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => revealChapterRow(firstKey: _firstKey, targetKey: _currentKey, index: index, rowExtent: 48));
+      }
     }
   }
 
@@ -292,17 +294,20 @@ class _DetailPageState extends State<DetailPage> {
       itemBuilder: (context, i) {
         final ch = items[i];
         final isCurrent = entry?.chapterUuid == ch.uuid;
-        return ChapterTile(
-          key: isCurrent ? _currentKey : null,
-          chapter: ch,
-          number: ch.index + 1,
-          read: _store.isRead(_pw, ch.uuid),
-          current: isCurrent ? entry : null,
-          locked: locked,
-          onTap: () {
-            if (locked) return;
-            openReader(context, comic: _comic, group: _browser.group, chapterUuid: ch.uuid, initialPage: isCurrent ? entry!.page : 0);
-          },
+        return KeyedSubtree(
+          key: i == 0 ? _firstKey : null,
+          child: ChapterTile(
+            key: isCurrent ? _currentKey : null,
+            chapter: ch,
+            number: ch.index + 1,
+            read: _store.isRead(_pw, ch.uuid),
+            current: isCurrent ? entry : null,
+            locked: locked,
+            onTap: () {
+              if (locked) return;
+              openReader(context, comic: _comic, group: _browser.group, chapterUuid: ch.uuid, initialPage: isCurrent ? entry!.page : 0);
+            },
+          ),
         );
       },
     );

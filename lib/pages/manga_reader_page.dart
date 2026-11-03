@@ -14,6 +14,7 @@ import '../ui/theme.dart';
 import '../ui/widgets.dart';
 import 'chapter_pager.dart';
 import 'navigation.dart';
+import 'zoomable_page.dart';
 
 class MangaReaderPage extends StatefulWidget {
   const MangaReaderPage({
@@ -284,7 +285,7 @@ class _MangaReaderPageState extends State<MangaReaderPage> {
       onPageChanged: _onPage,
       itemBuilder: (context, i) => i == images.length
           ? GestureDetector(onTap: () => _setChrome(!_chrome), child: _EndCard(chapter: c.chapter, onNext: () => _openChapter(c.chapter.next)))
-          : _ZoomablePage(onTapUp: _onTapUp, child: _image(images[i])),
+          : ZoomablePage(onTapUp: _onTapUp, child: _image(images[i])),
     );
   }
 
@@ -562,71 +563,6 @@ class _MangaReaderPageState extends State<MangaReaderPage> {
       );
 }
 
-/// 单页：双击放大/还原，捏合缩放；未放大时不拦截左右翻页。
-class _ZoomablePage extends StatefulWidget {
-  const _ZoomablePage({required this.child, required this.onTapUp});
-
-  final Widget child;
-  final GestureTapUpCallback onTapUp;
-
-  @override
-  State<_ZoomablePage> createState() => _ZoomablePageState();
-}
-
-class _ZoomablePageState extends State<_ZoomablePage> with SingleTickerProviderStateMixin {
-  final _t = TransformationController();
-  late final _anim = AnimationController(vsync: this, duration: const Duration(milliseconds: 220));
-  Animation<Matrix4>? _tween;
-  Offset _doubleTapAt = Offset.zero;
-  bool _zoomed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _anim.addListener(() => _t.value = _tween!.value);
-    _t.addListener(() {
-      final z = _t.value.getMaxScaleOnAxis() > 1.01;
-      if (z != _zoomed) setState(() => _zoomed = z);
-    });
-  }
-
-  @override
-  void dispose() {
-    _anim.dispose();
-    _t.dispose();
-    super.dispose();
-  }
-
-  void _toggleZoom() {
-    final Matrix4 end;
-    if (_zoomed) {
-      end = Matrix4.identity();
-    } else {
-      const s = 2.5;
-      final p = _doubleTapAt;
-      end = Matrix4.identity()
-        ..translateByDouble(-p.dx * (s - 1), -p.dy * (s - 1), 0, 1)
-        ..scaleByDouble(s, s, 1, 1);
-    }
-    _tween = Matrix4Tween(begin: _t.value, end: end).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic));
-    _anim.forward(from: 0);
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTapUp: widget.onTapUp,
-        onDoubleTapDown: (d) => _doubleTapAt = d.localPosition,
-        onDoubleTap: _toggleZoom,
-        child: InteractiveViewer(
-          transformationController: _t,
-          minScale: 1,
-          maxScale: 4,
-          panEnabled: _zoomed,
-          child: SizedBox.expand(child: widget.child),
-        ),
-      );
-}
-
 class _EndCard extends StatelessWidget {
   const _EndCard({required this.chapter, required this.onNext, this.scrollMode = false});
 
@@ -695,6 +631,7 @@ class _CatalogSheet extends StatefulWidget {
 class _CatalogSheetState extends State<_CatalogSheet> {
   late final _browser = ChapterBrowser(widget.comic.pathWord)..init(preferGroup: widget.group, locateIndex: widget.current.index);
   final _currentKey = GlobalKey();
+  final _firstKey = GlobalKey();
   bool _located = false;
 
   @override
@@ -706,10 +643,10 @@ class _CatalogSheetState extends State<_CatalogSheet> {
   void _onBrowser() {
     if (!_located && !_browser.loading && _browser.items != null) {
       _located = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final ctx = _currentKey.currentContext;
-        if (ctx != null) Scrollable.ensureVisible(ctx, alignment: .3);
-      });
+      final index = _browser.items!.indexWhere((c) => c.uuid == widget.current.uuid);
+      if (index >= 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => revealChapterRow(firstKey: _firstKey, targetKey: _currentKey, index: index, rowExtent: 48));
+      }
     }
   }
 
@@ -758,15 +695,18 @@ class _CatalogSheetState extends State<_CatalogSheet> {
               Expanded(
                 child: ListView(children: [
                   if (!_browser.loading)
-                    for (final ch in items)
-                      ChapterTile(
-                        key: ch.uuid == widget.current.uuid ? _currentKey : null,
-                        dark: true,
-                        chapter: ch,
-                        number: ch.index + 1,
-                        read: LibraryStore.instance.isRead(widget.comic.pathWord, ch.uuid),
-                        current: ch.uuid == widget.current.uuid ? current : null,
-                        onTap: () => widget.onPick(ch.uuid),
+                    for (final (i, ch) in items.indexed)
+                      KeyedSubtree(
+                        key: i == 0 ? _firstKey : null,
+                        child: ChapterTile(
+                          key: ch.uuid == widget.current.uuid ? _currentKey : null,
+                          dark: true,
+                          chapter: ch,
+                          number: ch.index + 1,
+                          read: LibraryStore.instance.isRead(widget.comic.pathWord, ch.uuid),
+                          current: ch.uuid == widget.current.uuid ? current : null,
+                          onTap: () => widget.onPick(ch.uuid),
+                        ),
                       ),
                   ChapterListStatus(browser: _browser, dark: true),
                 ]),

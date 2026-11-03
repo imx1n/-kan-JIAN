@@ -287,6 +287,8 @@ class ReaderPrefs extends ChangeNotifier {
     'lastUpdateCheck': 0,
     'skipVersion': '',
     'searchHistory': '',
+    'lineHeight': 1.85,
+    'reduceTransparency': false,
   };
 
   final _v = Map<String, Object>.of(defaults);
@@ -360,6 +362,14 @@ class ReaderPrefs extends ChangeNotifier {
   String get skipVersion => _get('skipVersion');
   set skipVersion(String v) => _set('skipVersion', v);
 
+  /// iOS 小说排版的连续行距（安卓用 [line] 的三档）。
+  double get lineHeight => _get('lineHeight');
+  set lineHeight(double v) => _set('lineHeight', v);
+
+  /// iOS「减少透明度」：玻璃控件改为实底。
+  bool get reduceTransparency => _get('reduceTransparency');
+  set reduceTransparency(bool v) => _set('reduceTransparency', v);
+
   List<String> get searchHistory {
     final raw = _get<String>('searchHistory');
     return raw.isEmpty ? const [] : raw.split('\n');
@@ -374,7 +384,7 @@ class ReaderPrefs extends ChangeNotifier {
 
   /// 只恢复排版相关项，保留配色、亮度和漫画设置。
   void resetTypography() {
-    for (final k in const ['font', 'fontSize', 'line', 'weight', 'spacing', 'ink']) {
+    for (final k in const ['font', 'fontSize', 'line', 'weight', 'spacing', 'ink', 'lineHeight']) {
       _v[k] = defaults[k]!;
     }
     _set('margin', defaults['margin']!);

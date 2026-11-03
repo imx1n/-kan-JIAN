@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -129,6 +130,26 @@ class ChapterBrowser extends ChangeNotifier {
       }
     }
   }
+}
+
+/// 把第 [index] 条章节滚到视口里。列表是懒构建的，远处的行还不存在，
+/// 所以先按固定行高 [rowExtent] 从第一行的位置估算并跳过去，再对齐到真实的行。
+Future<void> revealChapterRow({required GlobalKey firstKey, required GlobalKey targetKey, required int index, required double rowExtent}) async {
+  final built = targetKey.currentContext;
+  if (built != null) {
+    await Scrollable.ensureVisible(built, alignment: .35, duration: const Duration(milliseconds: 250));
+    return;
+  }
+  final first = firstKey.currentContext;
+  final box = first?.findRenderObject();
+  if (first == null || box is! RenderBox || !box.attached) return;
+  final position = Scrollable.of(first).position;
+  final firstOffset = RenderAbstractViewport.of(box).getOffsetToReveal(box, 0).offset;
+  final to = (firstOffset + index * rowExtent - position.viewportDimension * .35).clamp(position.minScrollExtent, position.maxScrollExtent);
+  position.jumpTo(to);
+  await WidgetsBinding.instance.endOfFrame;
+  final target = targetKey.currentContext;
+  if (target != null && target.mounted) await Scrollable.ensureVisible(target, alignment: .35, duration: const Duration(milliseconds: 200));
 }
 
 /// 下划线页签（分组切换）。

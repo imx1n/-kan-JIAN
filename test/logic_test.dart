@@ -36,6 +36,7 @@ void main() {
       expect(chapterTag('2024龙年贺图'), '特别篇');
       expect(chapterTag('人气投票'), '特别篇');
       expect(chapterTag('休刊通知'), '公告');
+      expect(chapterTag('新245话 第二次重画'), '重绘');
     });
 
     test('每 100 条一段', () {

@@ -50,8 +50,8 @@ void main() {
       final r = UpdateService.resolve(200, release(), '0.2.0');
       expect(r.status, UpdateStatus.available);
       expect(r.release!.version, '0.3.0');
-      expect(r.release!.apkUrl, 'https://example.com/universal.apk');
-      expect(r.release!.apkSize, 19293798);
+      expect(r.release!.packageUrl, 'https://example.com/universal.apk');
+      expect(r.release!.packageSize, 19293798);
       expect(r.release!.publishedAt!.toUtc(), DateTime.utc(2026, 11, 5, 8));
     });
 
@@ -62,8 +62,24 @@ void main() {
 
     test('没有 APK 附件时下载地址退回 Release 页面', () {
       final r = UpdateService.resolve(200, release(assets: const []), '0.2.0');
-      expect(r.release!.apkUrl, isNull);
+      expect(r.release!.packageUrl, isNull);
       expect(r.release!.downloadUrl, contains('/releases/tag/v0.3.0'));
+    });
+
+    test('iOS 只认 .ipa：新版本只有 APK 时不提示更新', () {
+      final r = UpdateService.resolve(200, release(), '0.2.0', ext: '.ipa', requirePackage: true);
+      expect(r.status, UpdateStatus.upToDate);
+      expect(r.message, contains('安装包'));
+      final withIpa = UpdateService.resolve(
+          200,
+          release(assets: [
+            {'name': 'kanjian-0.3.0.ipa', 'size': 30000000, 'browser_download_url': 'https://example.com/a.ipa'},
+          ]),
+          '0.2.0',
+          ext: '.ipa',
+          requirePackage: true);
+      expect(withIpa.status, UpdateStatus.available);
+      expect(withIpa.release!.packageUrl, 'https://example.com/a.ipa');
     });
 
     test('标签不是版本号时报错', () {

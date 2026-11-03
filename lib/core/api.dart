@@ -38,6 +38,10 @@ class MangaApi {
     headers: AppConfig.apiHeaders,
   ));
 
+  /// 测试或离线截图时替换网络层，返回本地样例数据。
+  @visibleForTesting
+  set adapter(HttpClientAdapter a) => _dio.httpClientAdapter = a;
+
   /// 最近一次成功的主机，下次优先使用。
   int _hostIndex = 0;
 
