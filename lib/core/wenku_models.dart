@@ -9,12 +9,15 @@ import 'api.dart' show ApiException;
 
 /// 搜索 / 书目列表里的一本书。
 class WenkuBook {
-  const WenkuBook({required this.aid, required this.name, this.author = '', this.cover = ''});
+  const WenkuBook({required this.aid, required this.name, this.author = '', this.cover = '', this.delisted = false});
 
   final int aid;
   final String name;
   final String author;
   final String cover;
+
+  /// 源站标了「因版权问题，该书已经下架」：目录可能还在，正文多半读不到。
+  final bool delisted;
 
   /// 封面可以直接按 aid 拼出来，不需要请求书目页。
   static String coverOf(int aid) => 'https://img.wenku8.com/image/${aid ~/ 1000}/$aid/${aid}s.jpg';
@@ -139,17 +142,48 @@ String _unescape(String s) => s
     .replaceAll('&quot;', '"')
     .replaceAll('&#39;', "'");
 
-/// 搜索结果的两种页面结构：有结果的表格，以及「没有找到」。
+/// 搜索结果页。三种情况：结果列表；没有结果；只有一条结果时源站直接跳到那本书的书目页。
 List<WenkuBook> parseSearch(String html) {
+  if (html.contains('没有搜索到') || html.contains('没有找到')) return const [];
   final out = <WenkuBook>[];
   final seen = <int>{};
-  for (final m in RegExp(r'<a href="/book/(\d+)\.htm"[^>]*>(.*?)</a>', dotAll: true).allMatches(html)) {
+  // 列表里每本书的书名链接包在 <b> 里，链接可能是绝对地址；作者在其后的「作者:xxx/分类:」。
+  final titles = RegExp(r'<b>\s*<a[^>]*href="[^"]*/book/(\d+)\.htm"[^>]*>(.*?)</a>', dotAll: true).allMatches(html).toList();
+  for (var k = 0; k < titles.length; k++) {
+    final m = titles[k];
     final aid = int.tryParse(m.group(1)!);
     final name = _unescape(_stripTags(m.group(2)!));
-    if (aid == null || name.isEmpty || name.length < 2 || !seen.add(aid)) continue;
-    out.add(WenkuBook(aid: aid, name: name, cover: WenkuBook.coverOf(aid)));
+    if (aid == null || name.isEmpty || !seen.add(aid)) continue;
+    final end = k + 1 < titles.length ? titles[k + 1].start : (m.end + 1500).clamp(0, html.length);
+    final seg = html.substring(m.end, end);
+    final author = RegExp(r'作者[:：]\s*([^/<\r\n]+)').firstMatch(seg)?.group(1)?.trim() ?? '';
+    out.add(WenkuBook(aid: aid, name: name, author: _unescape(author), cover: WenkuBook.coverOf(aid), delisted: seg.contains('已经下架')));
+  }
+  if (out.isEmpty) {
+    final single = parseBookPage(html);
+    if (single != null) out.add(single);
   }
   return out;
+}
+
+/// 书目页（`/book/{aid}.htm`）：书名、作者。认不出时返回 null。
+WenkuBook? parseBookPage(String html) {
+  final m = RegExp(r'/novel/\d+/(\d+)/index\.htm').firstMatch(html);
+  final aid = int.tryParse(m?.group(1) ?? '');
+  if (aid == null) return null;
+  final title = RegExp(r'<title>(.*?)</title>', dotAll: true).firstMatch(html)?.group(1) ?? '';
+  final name = _unescape(_stripTags(title)).replaceAll(RegExp(r'\s*[-_|].*$'), '').trim();
+  final author = RegExp(r'作\s*者[：:]\s*(?:<[^>]*>)*([^<\r\n/]{1,40})').firstMatch(html)?.group(1)?.trim() ?? '';
+  if (name.isEmpty) return null;
+  return WenkuBook(aid: aid, name: name, author: _unescape(author), cover: WenkuBook.coverOf(aid));
+}
+
+/// jieqi 的错误页（「出现错误」+「错误原因」）。不是错误页返回 null。
+String? parseSiteError(String html) {
+  if (!html.contains('出现错误') && !html.contains('错误原因')) return null;
+  final m = RegExp(r'错误原因[：:]\s*(?:<[^>]*>)*\s*([^<]{2,80})', dotAll: true).firstMatch(html);
+  final text = _unescape(m?.group(1) ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+  return text.isEmpty ? '源站返回了错误' : text;
 }
 
 /// 从书目页取 `class`，目录和正文的地址都要用。

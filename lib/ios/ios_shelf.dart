@@ -5,8 +5,10 @@ import '../core/api.dart';
 import '../core/models.dart';
 import '../core/shelf_sync.dart';
 import '../core/store.dart';
+import '../core/wenku.dart';
 import '../ui/format.dart' show formatDay;
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import '../ui/widgets.dart' show CoverImage;
 import 'ios_app.dart';
 import 'ios_search.dart';
@@ -74,12 +76,22 @@ class _IosShelfPageState extends State<IosShelfPage> {
   }
 
   Future<void> _entryMenu(ShelfEntry e) async {
-    final options = [e.started ? '继续阅读' : '开始阅读', if (e.kind == ShelfKind.manga) '查看详情', '移出书架'];
+    // 已登录轻小说账号时，源站的轻小说会一起移出源站书架，菜单里写明。
+    final syncRemove = wenkuAidOf(e.id) != null && WenkuService.instance.loggedIn;
+    final options = [e.started ? '继续阅读' : '开始阅读', if (e.kind == ShelfKind.manga) '查看详情', syncRemove ? '移出书架（源站同步移出）' : '移出书架'];
     final i = await showIosChoices(context, title: e.name, options: options, destructiveIndex: options.length - 1);
     if (!mounted || i == null) return;
     if (i == 0) iosContinue(context, e);
     if (options[i] == '查看详情') iosOpenDetail(context, briefOfEntry(e));
-    if (i == options.length - 1) _store.unfollow(e.id);
+    if (i == options.length - 1) {
+      // 已登录时，源站的轻小说一起移出源站书架；否则只移出本机书架。
+      final aid = wenkuAidOf(e.id);
+      if (aid != null && WenkuService.instance.loggedIn) {
+        await wenkuSetOnShelf(context, aid: aid, name: e.name, author: e.author, add: false);
+      } else {
+        _store.unfollow(e.id);
+      }
+    }
   }
 
   @override
@@ -310,7 +322,7 @@ class _FilterEmpty extends StatelessWidget {
             style: TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted),
           ),
           if (novel) ...[
-            TextAction(label: '登录轻小说账号，同步源站书架', onTap: () => Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => const IosWenkuPage()))),
+            TextAction(label: '登录轻小说账号，同步源站书架', onTap: () => Navigator.of(context).push(appRoute<void>((_) => const IosWenkuPage()))),
             const SizedBox(height: 10),
             TextAction(label: '打开示例《雨停之前》', onTap: () => iosOpenNovel(context)),
           ],
@@ -338,7 +350,7 @@ class _FirstRunState extends State<_FirstRun> {
           message: '打开作品详情，点一下追更书签。\n新话更新、读到哪页，都帮你记着。',
           actions: [
             AccentButton(label: '去发现', icon: 'arrow', onTap: () => IosShell.tab.value = 1),
-            TextAction(label: '搜索作品', onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosSearchPage()))),
+            TextAction(label: '搜索作品', onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage()))),
           ],
         ),
         const IosSection('热门推荐', note: '从这里翻开'),

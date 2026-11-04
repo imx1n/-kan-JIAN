@@ -45,12 +45,19 @@ const _contentHtml = '''
 </body></html>
 ''';
 
+/// 结构照 2026-11 实测的搜索结果页（书名、作者为自编）：书名在 <b><a> 里，作者在其后的「作者:xxx/分类:」。
 const _searchHtml = '''
-<table>
-<tr><td class="odd"><a href="/book/471.htm">样本长篇（上）</a></td></tr>
-<tr><td class="odd"><a href="/book/1990.htm">样本外传</a></td></tr>
-<tr><td class="odd"><a href="/book/471.htm">重复条目</a></td></tr>
-</table>
+<div id="content"><table class="grid"><caption>“样本”搜索结果</caption><tbody><tr><td>
+<div style="width:373px;"><div style="width:95px;float:left;"><a href="/book/471.htm" tiptitle="样本长篇（上）"><img src="http://img.wenku8.com/image/0/471/471s.jpg"></a></div>
+<div style="margin-top:2px;"><b><a style="font-size:13px;" href="/book/471.htm" target="_blank" tiptitle="样本长篇（上）">样本长篇（上）</a></b>
+<p>作者:样本作者甲/分类:样本文库</p><p>连载中</p><p class="hottext">公告:因版权问题，该书已经下架！</p></div></div>
+<div style="width:373px;"><div style="width:95px;float:left;"><a href="https://www.wenku8.net/book/1990.htm"><img src="http://img.wenku8.com/image/1/1990/1990s.jpg"></a></div>
+<div style="margin-top:2px;"><b><a style="font-size:13px;" href="https://www.wenku8.net/book/1990.htm" target="_blank">样本外传</a></b>
+<p>作者:样本作者乙/分类:样本文库</p><p>更新:2025-11-27/字数:1566K/连载中</p>
+<p><a href="/book/1990.htm" target="_blank">我要阅读</a> | <a href="/modules/article/addbookcase.php?bid=1990">加入书架</a></p></div></div>
+<div style="width:373px;"><div style="margin-top:2px;"><b><a href="/book/471.htm">样本长篇（上）</a></b><p>作者:样本作者甲/分类:样本文库</p></div></div>
+</td></tr></tbody></table></div>
+<div id="left"><a href="/book/3933.htm">侧栏里的书架链接</a></div>
 ''';
 
 const _shelfHtml = '''
@@ -184,12 +191,30 @@ void main() {
   });
 
   group('搜索与书架解析', () {
-    test('搜索结果去重，封面按 aid 拼', () {
+    test('搜索结果去重、兼容绝对链接，不收侧栏链接；作者和下架标记取到', () {
       final r = parseSearch(_searchHtml);
       expect(r.map((e) => e.aid).toList(), [471, 1990]);
       expect(r.first.name, '样本长篇（上）');
+      expect(r.map((e) => e.author).toList(), ['样本作者甲', '样本作者乙']);
+      expect(r.map((e) => e.delisted).toList(), [true, false]);
       expect(r.first.cover, 'https://img.wenku8.com/image/0/471/471s.jpg');
       expect(WenkuBook.coverOf(3933), 'https://img.wenku8.com/image/3/3933/3933s.jpg');
+    });
+
+    test('没有结果时返回空，不把侧栏链接当结果', () {
+      expect(parseSearch('<div>对不起，没有搜索到相关的文章！</div><a href="/book/3933.htm">侧栏</a>'), isEmpty);
+    });
+
+    test('只有一条结果时源站直接跳到书目页，也能认出来', () {
+      final r = parseSearch('<html><title>样本独本 - 轻小说文库</title><span>小说作者：样本作者丙</span><a href="/novel/2/2001/index.htm">小说目录</a></html>');
+      expect(r.single.aid, 2001);
+      expect(r.single.name, '样本独本');
+      expect(r.single.author, '样本作者丙');
+    });
+
+    test('jieqi 错误页取出错误原因', () {
+      expect(parseSiteError('<title>出现错误</title><div><br>错误原因：对不起，该文章已经在您的书架！<br>'), '对不起，该文章已经在您的书架！');
+      expect(parseSiteError('<html>正常页面</html>'), isNull);
     });
 
     test('书架行按列位解析，空书签不导致错行', () {
@@ -259,26 +284,54 @@ void main() {
       expect(api.loggedIn, isFalse);
     });
 
-    test('加入书架带上 bid', () async {
-      api.adapter = _FakeAdapter((o) {
-        if (o.uri.path.contains('bookcase') && !o.uri.path.contains('add')) return _html(_shelfHtml);
-        return _html('<html><a href="/logout.php">退出</a></html>', headers: _loginCookies);
-      });
+    /// 假源站：书架是一组 aid，加入 / 移出会真的改动它，书架页按当前状态生成。
+    _FakeAdapter shelfSite(Set<int> shelf, {String? addError}) => _FakeAdapter((o) {
+          final q = o.uri.queryParameters;
+          if (o.uri.path.endsWith('addbookcase.php')) {
+            if (addError != null) return _html('<title>出现错误</title>错误原因：$addError<br>');
+            shelf.add(int.parse(q['bid']!));
+            return _html('<html>加入书架成功</html>');
+          }
+          if (o.uri.path.endsWith('bookcase.php')) {
+            if (q.containsKey('delid')) shelf.remove(int.parse(q['delid']!) - 10000000);
+            final rows = [
+              for (final aid in shelf)
+                '<tr><td><input type="checkbox" name="checkid[]" value="${10000000 + aid}"></td><td><a href="/book/$aid.htm">样本$aid</a></td><td>作者</td><td>插图</td><td></td><td>26-11-02</td><td>移除</td></tr>',
+            ];
+            return _html('<table>${rows.join()}</table><a href="/logout.php">退出</a>');
+          }
+          return _html('<html><a href="/logout.php">退出</a></html>', headers: _loginCookies);
+        });
+
+    test('加入书架：带上 bid，回读书架里有这本才算成功', () async {
+      final shelf = <int>{};
+      final fake = shelfSite(shelf);
+      api.adapter = fake;
       await api.login('someone', 'secret');
-      await api.addToShelf(3933);
-      expect(api.lastRequestUri!.path, '/modules/article/addbookcase.php');
-      expect(api.lastRequestUri!.queryParameters['bid'], '3933');
+      final item = await api.addBook(3933);
+      expect(item.aid, 3933);
+      expect(item.entryId, 10003933);
+      expect(fake.requests.any((r) => r.uri.path.endsWith('addbookcase.php') && r.uri.queryParameters['bid'] == '3933'), isTrue);
     });
 
-    test('移出书架用书架条目 id，不是 aid', () async {
-      api.adapter = _FakeAdapter((o) {
-        if (o.uri.path.contains('bookcase') && o.uri.queryParameters.containsKey('delid')) return _html(_shelfHtml);
-        if (o.uri.path.contains('bookcase')) return _html(_shelfHtml);
-        return _html('<html><a href="/logout.php">退出</a></html>', headers: _loginCookies);
-      });
+    test('加入书架失败：书架里没出现，把源站的错误原因带出来', () async {
+      api.adapter = shelfSite(<int>{}, addError: '对不起，您的书架已满');
       await api.login('someone', 'secret');
-      await api.removeFromShelf(13346167);
-      expect(api.lastRequestUri!.queryParameters['delid'], '13346167');
+      await expectLater(api.addBook(3933), throwsA(predicate((e) => '$e'.contains('书架已满'))));
+    });
+
+    test('移出书架：先查到条目 id 再删，删完回读确认', () async {
+      final shelf = {3933, 4455};
+      final fake = shelfSite(shelf);
+      api.adapter = fake;
+      await api.login('someone', 'secret');
+      await api.removeBook(3933);
+      expect(shelf, {4455});
+      expect(fake.requests.any((r) => r.uri.queryParameters['delid'] == '10003933'), isTrue);
+      // 本来就不在书架上：不发删除请求，也不报错。
+      final before = fake.requests.length;
+      await api.removeBook(3933);
+      expect(fake.requests.skip(before).any((r) => r.uri.queryParameters.containsKey('delid')), isFalse);
     });
   });
 }

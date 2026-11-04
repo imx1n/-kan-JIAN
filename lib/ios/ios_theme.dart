@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/store.dart';
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 
 /// iOS 26 设计稿的色板：近白实底承载内容，暖棕为唯一强调色；深色模式按设计稿的 dark 变量。
 /// 阅读器始终是深色，直接用下面 d 开头的常量。
@@ -142,7 +143,7 @@ class Glass extends StatelessWidget {
 
 /// 按下时轻微缩放、变淡，替代 Material 水波纹。
 class Pressable extends StatefulWidget {
-  const Pressable({super.key, required this.child, required this.onTap, this.onLongPress, this.haptic = false, this.semanticLabel, this.dimWhenDisabled = true});
+  const Pressable({super.key, required this.child, required this.onTap, this.onLongPress, this.haptic = false, this.semanticLabel, this.dimWhenDisabled = true, this.pressedScale = .975});
 
   final Widget child;
   final VoidCallback? onTap;
@@ -152,6 +153,9 @@ class Pressable extends StatefulWidget {
 
   /// 没有 [onTap] 时是否变淡表示不可用。
   final bool dimWhenDisabled;
+
+  /// 按下时的缩放：普通按钮 0.975，底部导航 0.96（设计稿）。
+  final double pressedScale;
 
   @override
   State<Pressable> createState() => _PressableState();
@@ -182,10 +186,16 @@ class _PressableState extends State<Pressable> {
                   if (widget.haptic) HapticFeedback.selectionClick();
                   widget.onTap!();
                 },
+          // 按下 80ms 缩到 0.975、透明度 0.88；松开 180ms 恢复。
           child: AnimatedScale(
-            scale: _down ? .97 : 1,
-            duration: const Duration(milliseconds: 100),
-            child: AnimatedOpacity(opacity: _down ? .7 : (widget.onTap == null && widget.dimWhenDisabled ? .4 : 1), duration: const Duration(milliseconds: 100), child: widget.child),
+            scale: _down ? widget.pressedScale : 1,
+            duration: Motion.of(context, _down ? 80 : 180),
+            curve: Motion.ease,
+            child: AnimatedOpacity(
+              opacity: _down ? .88 : (widget.onTap == null && widget.dimWhenDisabled ? .4 : 1),
+              duration: Motion.of(context, _down ? 80 : 140),
+              child: widget.child,
+            ),
           ),
         ),
       );
@@ -633,7 +643,23 @@ class _ToastBody extends StatefulWidget {
 }
 
 class _ToastBodyState extends State<_ToastBody> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 200))..forward();
+  late final _c = AnimationController(vsync: this, duration: Motion.ms(220), reverseDuration: Motion.ms(150));
+  late final _in = CurvedAnimation(parent: _c, curve: Motion.ease, reverseCurve: Motion.exit.flipped);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_c.status == AnimationStatus.dismissed && !_shown) {
+      _shown = true;
+      if (Motion.reduced(context)) {
+        _c.value = 1;
+      } else {
+        _c.forward();
+      }
+    }
+  }
+
+  bool _shown = false;
 
   @override
   void initState() {
@@ -652,8 +678,9 @@ class _ToastBodyState extends State<_ToastBody> with SingleTickerProviderStateMi
   }
 
   @override
-  Widget build(BuildContext context) => FadeTransition(
-        opacity: _c,
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _in,
+        builder: (_, c) => Opacity(opacity: _in.value, child: Transform.translate(offset: Offset(0, 8 * (1 - _in.value)), child: c)),
         child: Glass(
           radius: 22,
           dark: widget.dark,

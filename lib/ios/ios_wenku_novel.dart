@@ -8,9 +8,10 @@ import '../core/store.dart';
 import '../core/wenku.dart';
 import '../core/wenku_models.dart';
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import 'ios_novel.dart' show novelBodyStyle, novelPaperColors, novelParagraph, showNovelAppearance;
 import 'ios_theme.dart';
-import 'ios_wenku.dart' show openWenkuLogin;
+import 'ios_wenku.dart' show WenkuShelfButton, openWenkuLogin;
 
 /// 真实轻小说阅读页：目录、正文都来自源站，排版沿用「阅读设置」里的纸张、字号、行距。
 ///
@@ -150,6 +151,8 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
         name: _title,
         cover: WenkuBook.coverOf(c.aid),
         author: _author,
+        // 只读不进书架：和漫画一样，点「加入书架」才算收藏。
+        followed: false,
         updatedAt: 0,
       ),
       chapterUuid: '${ch.cid}',
@@ -196,59 +199,108 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: _prefs,
-        builder: (context, _) {
-          final colors = novelPaperColors(_prefs.theme);
-          SystemChrome.setSystemUIOverlayStyle(colors.dark ? kDarkChrome : kLightChrome);
-          final top = MediaQuery.paddingOf(context).top;
-          final bottom = MediaQuery.paddingOf(context).bottom;
-          final c = _catalog;
-          final total = c?.chapters.length ?? 0;
-          return PopScope(
-            onPopInvokedWithResult: (_, _) => _saveProgress(),
-            child: Scaffold(
-              backgroundColor: colors.bg,
-              body: Stack(children: [
-                Positioned.fill(child: _body(colors, top, bottom)),
-                Positioned.fill(child: IgnorePointer(child: ColoredBox(color: Colors.black.withValues(alpha: (1 - _prefs.brightness) * .7)))),
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  top: _chrome ? top + 4 : -100,
-                  left: 16,
-                  right: 16,
-                  child: Row(children: [
-                    GlassButton(icon: 'chevronLeft', label: '返回', dark: colors.dark, onTap: () => Navigator.maybePop(context)),
-                    Expanded(
-                      child: Text(_title, textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.ink)),
-                    ),
-                    GlassButton(icon: _marked ? 'bookmarkFilled' : 'bookmark', label: _marked ? '取消书签' : '添加书签', dark: colors.dark, color: _marked ? IosColors.accent : null, onTap: total == 0 ? null : _toggleBookmark),
-                  ]),
+    listenable: _prefs,
+    builder: (context, _) {
+      final colors = novelPaperColors(_prefs.theme);
+      SystemChrome.setSystemUIOverlayStyle(colors.dark ? kDarkChrome : kLightChrome);
+      final top = MediaQuery.paddingOf(context).top;
+      final bottom = MediaQuery.paddingOf(context).bottom;
+      final c = _catalog;
+      final total = c?.chapters.length ?? 0;
+      return PopScope(
+        onPopInvokedWithResult: (_, _) => _saveProgress(),
+        child: Scaffold(
+          backgroundColor: colors.bg,
+          body: Stack(
+            children: [
+              Positioned.fill(child: _body(colors, top, bottom)),
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: ColoredBox(color: Colors.black.withValues(alpha: (1 - _prefs.brightness) * .7)),
                 ),
-                AnimatedPositioned(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  left: 16,
-                  right: 16,
-                  bottom: _chrome ? (bottom > 0 ? bottom - 4 : 16) : -120,
+              ),
+              // 顶栏下面垫一层纸色渐隐，书名和按钮不直接压在正文上。
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: top + 76,
+                child: ChromeReveal(
+                  visible: _chrome,
+                  dy: -8,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0, .72, 1],
+                          colors: [colors.bg, colors.bg.withValues(alpha: .92), colors.bg.withValues(alpha: 0)],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: top + 4,
+                left: 16,
+                right: 16,
+                child: ChromeReveal(
+                  visible: _chrome,
+                  dy: -8,
+                  child: Row(
+                    children: [
+                      GlassButton(icon: 'chevronLeft', label: '返回', dark: colors.dark, onTap: () => Navigator.maybePop(context)),
+                      Expanded(
+                        child: Text(
+                          _title,
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.ink),
+                        ),
+                      ),
+                      GlassButton(
+                        icon: _marked ? 'bookmarkFilled' : 'bookmark',
+                        label: _marked ? '取消书签' : '添加书签',
+                        dark: colors.dark,
+                        color: _marked ? IosColors.accent : null,
+                        onTap: total == 0 ? null : _toggleBookmark,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: (bottom > 0 ? bottom - 4 : 16),
+                child: ChromeReveal(
+                  visible: _chrome,
+                  dy: 8,
                   child: Glass(
                     dark: colors.dark,
                     radius: 30,
                     child: SizedBox(
                       height: 60,
-                      child: Row(children: [
-                        Expanded(child: _barButton('bookmark', '目录', colors, total == 0 ? null : _toc)),
-                        Text(total == 0 ? '—' : '${_index + 1} / $total', style: TextStyle(fontSize: 15, color: colors.ink)),
-                        Expanded(child: _barButton('settings', '阅读设置', colors, () => showNovelAppearance(context))),
-                      ]),
+                      child: Row(
+                        children: [
+                          Expanded(child: _barButton('bookmark', '目录', colors, total == 0 ? null : _toc)),
+                          Text(total == 0 ? '—' : '${_index + 1} / $total', style: TextStyle(fontSize: 15, color: colors.ink)),
+                          Expanded(child: _barButton('settings', '阅读设置', colors, () => showNovelAppearance(context))),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ]),
-            ),
-          );
-        },
+              ),
+            ],
+          ),
+        ),
       );
+    },
+  );
 
   Widget _body(({Color bg, Color ink, Color muted, bool dark}) colors, double top, double bottom) {
     final c = _catalog;
@@ -258,36 +310,61 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
     if (_needLogin) {
       return Padding(
         padding: EdgeInsets.fromLTRB(28, top + 80, 28, bottom + 100),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          AppIcon('lock', size: 34, color: colors.muted, stroke: 1.5),
-          const SizedBox(height: 14),
-          Text('正文需要登录后才能阅读', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: colors.ink)),
-          const SizedBox(height: 8),
-          Text('源站对未登录的访客不提供正文。登录后可以正常阅读，书架也会一起同步。',
-              textAlign: TextAlign.center, style: TextStyle(fontSize: 14, height: 1.5, color: colors.muted)),
-          const SizedBox(height: 20),
-          Pressable(
-            onTap: _login,
-            child: Container(
-              height: 46,
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(23)),
-              child: Center(child: Text('登录轻小说账号', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: IosColors.onAccent))),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppIcon('lock', size: 34, color: colors.muted, stroke: 1.5),
+            const SizedBox(height: 14),
+            Text(
+              '正文需要登录后才能阅读',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: colors.ink),
             ),
-          ),
-        ]),
+            const SizedBox(height: 8),
+            Text(
+              '源站对未登录的访客不提供正文。登录后可以正常阅读，书架也会一起同步。',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, height: 1.5, color: colors.muted),
+            ),
+            const SizedBox(height: 20),
+            Pressable(
+              onTap: _login,
+              child: Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(23)),
+                child: Center(
+                  child: Text(
+                    '登录轻小说账号',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: IosColors.onAccent),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
     if (_error != null && _content == null) {
       return Padding(
         padding: EdgeInsets.fromLTRB(28, top + 80, 28, bottom + 100),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text('这一章没加载出来', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: colors.ink)),
-          const SizedBox(height: 8),
-          Text(_error!, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, height: 1.5, color: colors.muted)),
-          const SizedBox(height: 18),
-          TextAction(label: '重试', color: colors.ink, onTap: () => _loadChapter(_index)),
-        ]),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '这一章没加载出来',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: colors.ink),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, height: 1.5, color: colors.muted),
+            ),
+            const SizedBox(height: 18),
+            TextAction(label: '重试', color: colors.ink, onTap: () => _loadChapter(_index)),
+          ],
+        ),
       );
     }
     final content = _content;
@@ -311,14 +388,19 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
           children: [
             if (ch != null) Text('第 ${_index + 1} 章 / 共 ${c!.chapters.length} 章', style: TextStyle(fontSize: 13, color: colors.muted)),
             const SizedBox(height: 6),
-            Text(ch?.name ?? _title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: colors.ink)),
+            Text(
+              ch?.name ?? _title,
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: colors.ink),
+            ),
             const SizedBox(height: 22),
             if (content != null)
               for (final para in content.paragraphs)
                 if (para == '[插图]' && imageIndex < content.images.length)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 18),
-                    child: Center(child: _NovelImage(url: content.images[imageIndex++], width: width)),
+                    child: Center(
+                      child: _NovelImage(url: content.images[imageIndex++], width: width),
+                    ),
                   )
                 else
                   Padding(
@@ -327,16 +409,22 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
                   ),
             const SizedBox(height: 18),
             if (content != null && c != null) ...[
-              Row(children: [
-                if (content.previous != null && _index > 0)
-                  TextAction(label: '上一章', color: colors.ink, onTap: () => _goChapter(_index - 1)),
-                const Spacer(),
-                if (content.next != null && _index < c.chapters.length - 1)
-                  TextAction(label: '下一章', color: colors.ink, onTap: () => _goChapter(_index + 1)),
-              ]),
+              Row(
+                children: [
+                  if (content.previous != null && _index > 0) TextAction(label: '上一章', color: colors.ink, onTap: () => _goChapter(_index - 1)),
+                  const Spacer(),
+                  if (content.next != null && _index < c.chapters.length - 1) TextAction(label: '下一章', color: colors.ink, onTap: () => _goChapter(_index + 1)),
+                ],
+              ),
+              const SizedBox(height: 26),
+              Center(
+                child: WenkuShelfButton(aid: c.aid, name: _title, author: _author),
+              ),
               if (_index >= c.chapters.length - 1) ...[
                 const SizedBox(height: 14),
-                Center(child: Text('— 全文完 —', style: TextStyle(fontSize: 13, color: colors.muted))),
+                Center(
+                  child: Text('— 全文完 —', style: TextStyle(fontSize: 13, color: colors.muted)),
+                ),
               ],
             ],
           ],
@@ -346,16 +434,19 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
   }
 
   Widget _barButton(String icon, String label, ({Color bg, Color ink, Color muted, bool dark}) colors, VoidCallback? onTap) => Pressable(
-        onTap: onTap,
-        child: SizedBox(
-          height: 60,
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            AppIcon(icon, size: 18, color: colors.ink, stroke: 1.7),
-            const SizedBox(width: 8),
-            Text(label, style: TextStyle(fontSize: 15, color: colors.ink)),
-          ]),
-        ),
-      );
+    onTap: onTap,
+    child: SizedBox(
+      height: 60,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AppIcon(icon, size: 18, color: colors.ink, stroke: 1.7),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(fontSize: 15, color: colors.ink)),
+        ],
+      ),
+    ),
+  );
 }
 
 /// 正文插图：按原图比例显示，宽度跟随正文。图床会拦 Dart 默认的 UA（实测 403），
@@ -368,20 +459,24 @@ class _NovelImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: CachedNetworkImage(
-          imageUrl: url,
-          httpHeaders: const {'User-Agent': WenkuService.userAgent, 'Referer': '${WenkuService.base}/'},
-          width: width,
-          fit: BoxFit.fitWidth,
-          memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
-          placeholder: (_, _) => SizedBox(width: width, height: width * 1.4, child: const Center(child: CupertinoActivityIndicator())),
-          errorWidget: (_, _, _) => Container(
-            width: width,
-            padding: const EdgeInsets.symmetric(vertical: 24),
-            alignment: Alignment.center,
-            child: Text('插图没能加载', style: TextStyle(fontSize: 13, color: IosColors.muted)),
-          ),
-        ),
-      );
+    borderRadius: BorderRadius.circular(8),
+    child: CachedNetworkImage(
+      imageUrl: url,
+      httpHeaders: const {'User-Agent': WenkuService.userAgent, 'Referer': '${WenkuService.base}/'},
+      width: width,
+      fit: BoxFit.fitWidth,
+      memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
+      placeholder: (_, _) => SizedBox(
+        width: width,
+        height: width * 1.4,
+        child: const Center(child: CupertinoActivityIndicator()),
+      ),
+      errorWidget: (_, _, _) => Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        alignment: Alignment.center,
+        child: Text('插图没能加载', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+      ),
+    ),
+  );
 }

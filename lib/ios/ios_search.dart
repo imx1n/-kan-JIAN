@@ -4,14 +4,17 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../core/wenku.dart';
+import '../core/wenku_models.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
 import 'ios_theme.dart';
+import 'ios_wenku.dart' show WenkuShelfButton;
 
-/// 搜索：接口始终按「全部」搜（作品名和作者一起）。接口自带的按类型搜索是模糊匹配、并不可靠，
+/// 搜索：漫画接口始终按「全部」搜（作品名和作者一起）。接口自带的按类型搜索是模糊匹配、并不可靠，
 /// 所以「作品名 / 作者」页签在已载入的结果里按字段筛选，不足一屏时自动再载入下一页。
 class IosSearchPage extends StatefulWidget {
   const IosSearchPage({super.key});
@@ -25,8 +28,16 @@ class _IosSearchPageState extends State<IosSearchPage> {
   final _prefs = ReaderPrefs.instance;
   String _query = '';
 
-  /// 0 全部、1 作品名、2 作者。
+  /// 0 全部、1 作品名、2 作者、3 轻小说（Wenku8，切过去才搜，避免每次都多发请求、撞上源站的搜索间隔）。
   int _scope = 0;
+
+  List<WenkuBook> _novels = const [];
+  bool _novelLoading = false;
+  String? _novelError;
+  bool _novelByAuthor = false;
+
+  /// 上一次轻小说搜索的「方式|关键词」，相同就不重复请求。
+  String? _novelKey;
   late final _pager = Pager<ComicBrief>((offset) => MangaApi.instance.search(_query, offset: offset));
 
   @override
@@ -44,6 +55,37 @@ class _IosSearchPageState extends State<IosSearchPage> {
     _prefs.addSearch(q);
     setState(() => _query = q);
     _pager.refresh();
+    if (_scope == 3) _searchNovels();
+  }
+
+  void _flipNovelMode() {
+    setState(() => _novelByAuthor = !_novelByAuthor);
+    _searchNovels();
+  }
+
+  Future<void> _searchNovels({bool force = false}) async {
+    final key = '$_novelByAuthor|$_query';
+    if (_query.isEmpty || (!force && key == _novelKey)) return;
+    _novelKey = key;
+    setState(() {
+      _novelLoading = true;
+      _novelError = null;
+    });
+    try {
+      final r = await WenkuService.instance.search(_query, byAuthor: _novelByAuthor);
+      if (!mounted || key != _novelKey) return;
+      setState(() {
+        _novels = r;
+        _novelLoading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted || key != _novelKey) return;
+      setState(() {
+        _novelError = e.message;
+        _novelLoading = false;
+        _novelKey = null;
+      });
+    }
   }
 
   bool _match(ComicBrief c) {
@@ -99,8 +141,16 @@ class _IosSearchPageState extends State<IosSearchPage> {
                 SizedBox(height: 44, child: TextAction(label: '取消', color: IosColors.ink, onTap: () => Navigator.pop(context))),
               ]),
             ),
-            if (_query.isNotEmpty) UnderlineTabs(options: const ['全部', '作品名', '作者'], selected: _scope, onChanged: (i) => setState(() => _scope = i)),
-            Expanded(child: _query.isEmpty ? _history() : _results()),
+            if (_query.isNotEmpty)
+              UnderlineTabs(
+                options: const ['全部', '作品名', '作者', '轻小说'],
+                selected: _scope,
+                onChanged: (i) {
+                  setState(() => _scope = i);
+                  if (i == 3) _searchNovels();
+                },
+              ),
+            Expanded(child: _query.isEmpty ? _history() : (_scope == 3 ? _novelResults() : _results())),
           ]),
         ),
       );
@@ -178,6 +228,102 @@ class _IosSearchPageState extends State<IosSearchPage> {
           );
         },
       );
+}
+
+extension on _IosSearchPageState {
+  Widget _novelResults() {
+    if (_novelLoading) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const CupertinoActivityIndicator(),
+          const SizedBox(height: 12),
+          Text('正在搜索轻小说…', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+        ]),
+      );
+    }
+    final mode = _novelByAuthor ? '作者' : '作品名';
+    if (_novelError != null) {
+      return Center(
+        child: Unavailable(icon: 'search', title: '轻小说没有搜出来', message: _novelError!, actions: [TextAction(label: '重试', onTap: () => _searchNovels(force: true))]),
+      );
+    }
+    final toggle = TextAction(
+      label: _novelByAuthor ? '改按作品名搜' : '改按作者搜',
+      onTap: _flipNovelMode,
+    );
+    if (_novels.isEmpty) {
+      return Center(
+        child: Unavailable(icon: 'book', title: '没有找到相关轻小说', message: '按$mode搜「$_query」没有结果。源站只收录轻小说，书名多为简体。', actions: [toggle]),
+      );
+    }
+    return ListView.builder(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 40),
+      itemCount: _novels.length + 1,
+      itemBuilder: (context, i) {
+        if (i == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 8, 0),
+            child: Row(children: [
+              Text('${_novels.length} 本轻小说 · 按$mode · 来自 Wenku8', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+              const Spacer(),
+              toggle,
+            ]),
+          );
+        }
+        return _NovelRow(book: _novels[i - 1], query: _query);
+      },
+    );
+  }
+}
+
+/// 轻小说搜索结果：点行进阅读页，行尾可以直接加入 / 移出源站书架。
+class _NovelRow extends StatelessWidget {
+  const _NovelRow({required this.book, required this.query});
+
+  final WenkuBook book;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: () => iosOpenWenkuNovel(context, aid: book.aid, name: book.name),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 20),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(padding: const EdgeInsets.only(top: 10), child: CoverImage(url: book.cover, title: book.name, width: 64, height: 86, radius: 5)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 106),
+                padding: const EdgeInsets.fromLTRB(0, 12, 16, 14),
+                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: IosColors.line, width: .5))),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text.rich(_highlight(book.name, query), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, height: 1.35, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                      const SizedBox(height: 4),
+                      Text([if (book.author.isNotEmpty) book.author, '轻小说', if (book.delisted) '源站已下架'].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
+                    ]),
+                  ),
+                  const SizedBox(width: 10),
+                  WenkuShelfButton(aid: book.aid, name: book.name, author: book.author, compact: true),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      );
+}
+
+TextSpan _highlight(String text, String query) {
+  if (query.isEmpty || !text.contains(query)) return TextSpan(text: text);
+  final parts = text.split(query);
+  return TextSpan(children: [
+    for (var i = 0; i < parts.length; i++) ...[
+      TextSpan(text: parts[i]),
+      if (i < parts.length - 1) TextSpan(text: query, style: TextStyle(color: IosColors.accent)),
+    ],
+  ]);
 }
 
 class _ResultRow extends StatelessWidget {

@@ -10,6 +10,7 @@ import '../core/api.dart';
 import '../core/config.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
+import '../ui/motion.dart';
 import '../ui/format.dart' show formatBytes;
 import 'ios_account.dart';
 import 'ios_app.dart';
@@ -134,7 +135,7 @@ class _IosMinePageState extends State<IosMinePage> {
     if (ok == true) _store.clearHistory();
   }
 
-  void _open(Widget page) => Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => page));
+  void _open(Widget page) => Navigator.of(context).push(appRoute<void>((_) => page));
 
   Future<void> _checkUpdate() async {
     setState(() => _checking = true);

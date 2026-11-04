@@ -310,6 +310,9 @@ class WenkuService extends ChangeNotifier {
       '/modules/article/search.php',
       rawQuery: 'searchtype=${byAuthor ? 'author' : 'articlename'}&searchkey=${encodeGbkQuery(q)}',
     );
+    // 源站限制两次搜索的间隔，太快会回错误页。
+    final err = parseSiteError(html);
+    if (err != null) throw ApiException(err);
     return parseSearch(html);
   }
 
@@ -350,18 +353,24 @@ class WenkuService extends ChangeNotifier {
     return parseShelf(html);
   }
 
-  /// 加入书架。返回是否成功（源站只回一个跳转页，靠书架里出现这本书判断）。
-  Future<bool> addToShelf(int aid) async {
+  /// 加入源站书架，并回读书架确认。返回书架里的那一行（移出时要用它的条目 id）。
+  Future<WenkuShelfItem> addBook(int aid) async {
     if (!loggedIn) throw const WenkuNeedLogin();
-    await _get('/modules/article/addbookcase.php', query: {'bid': '$aid'});
-    return true;
+    final html = await _get('/modules/article/addbookcase.php', query: {'bid': '$aid'}, referer: '$base/book/$aid.htm');
+    final err = parseSiteError(html);
+    // 「已经在书架里」也算成功，以回读结果为准。
+    final item = (await shelf()).where((i) => i.aid == aid).firstOrNull;
+    if (item != null) return item;
+    throw ApiException(err ?? '源站没有加进书架，请稍后再试');
   }
 
-  /// 移出书架。[entryId] 是书架行的 id，不是 aid。
-  Future<bool> removeFromShelf(int entryId) async {
+  /// 移出源站书架：先在书架里找到这本书的条目 id，删完再回读确认。本来就不在书架上也算成功。
+  Future<void> removeBook(int aid) async {
     if (!loggedIn) throw const WenkuNeedLogin();
-    await _get('/modules/article/bookcase.php', query: {'delid': '$entryId'});
-    return true;
+    final item = (await shelf()).where((i) => i.aid == aid).firstOrNull;
+    if (item == null) return;
+    await _get('/modules/article/bookcase.php', query: {'delid': '${item.entryId}'}, referer: '$base/modules/article/bookcase.php');
+    if ((await shelf()).any((i) => i.aid == aid)) throw const ApiException('源站没有移出书架，请稍后再试');
   }
 
   static String _strip(String s) => s.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&nbsp;', ' ').trim();

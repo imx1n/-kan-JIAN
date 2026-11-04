@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import '../ui/widgets.dart' show CoverImage, revealChapterRow;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
@@ -202,7 +203,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    AppIcon(following ? 'bookmarkFilled' : 'bookmark', size: 19, color: IosColors.accent, stroke: 1.8),
+                    BounceOnChange(value: following, child: AppIcon(following ? 'bookmarkFilled' : 'bookmark', size: 19, color: IosColors.accent, stroke: 1.8)),
                     const SizedBox(width: 6),
                     Text(following ? '已追更' : '追更', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink)),
                   ]),

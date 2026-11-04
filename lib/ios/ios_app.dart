@@ -17,6 +17,7 @@ import 'ios_reader.dart';
 import 'ios_search.dart';
 import 'ios_shelf.dart';
 import '../core/wenku_web.dart';
+import '../ui/motion.dart';
 import 'ios_theme.dart';
 import 'ios_wenku_novel.dart';
 
@@ -49,10 +50,10 @@ class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
   }
 
   bool get _wantDark => switch (_prefs.appearance) {
-        1 => false,
-        2 => true,
-        _ => WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark,
-      };
+    1 => false,
+    2 => true,
+    _ => WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark,
+  };
 
   @override
   void didChangePlatformBrightness() => _apply();
@@ -81,7 +82,12 @@ class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
       // 根部挂一个 1×1 的隐藏 WebView：轻小说源站拦下 HTTP 客户端时用它取页面。
       builder: (context, child) => GlassScope(
         reduce: GlassScope.reduce,
-        child: Stack(children: [child!, Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host())]),
+        child: Stack(
+          children: [
+            child!,
+            Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host()),
+          ],
+        ),
       ),
       home: const IosShell(),
     );
@@ -117,39 +123,117 @@ class _IosShellState extends State<IosShell> {
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
-        valueListenable: IosShell.tab,
-        // Android 返回键：在发现 / 我的上先回到书架，再退出应用。
-        builder: (context, index, _) => PopScope(
-          canPop: index == 0,
-          onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) IosShell.tab.value = 0;
-          },
-          child: Scaffold(
-            body: Stack(children: [
-              Positioned.fill(child: IndexedStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()])),
-              // 底部渐隐，让悬浮标签栏下的内容不抢视线。
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 120,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .88)],
-                      ),
-                    ),
+    valueListenable: IosShell.tab,
+    // Android 返回键：在发现 / 我的上先回到书架，再退出应用。
+    builder: (context, index, _) => PopScope(
+      canPop: index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) IosShell.tab.value = 0;
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // 首次进入：内容由下方 7px 淡入归位（只在启动时播一次）；切换标签用 fade-through。
+            Positioned.fill(
+              child: FadeSlideIn(
+                delayMs: 45,
+                child: _TabStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()]),
+              ),
+            ),
+            // 底部渐隐，让悬浮标签栏下的内容不抢视线。
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 120,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .88)]),
                   ),
                 ),
               ),
-              _TabDock(index: index),
-            ]),
-          ),
+            ),
+            _TabDock(index: index),
+          ],
         ),
-      );
+      ),
+    ),
+  );
+}
+
+/// 三个标签页常驻（保留各自的滚动位置），切换时 fade-through：旧页在前 30% 时间里淡出，
+/// 新页在后 70% 淡入，两页不叠在一起；总时长 220ms，不横移。
+class _TabStack extends StatefulWidget {
+  const _TabStack({required this.index, required this.children});
+
+  final int index;
+  final List<Widget> children;
+
+  @override
+  State<_TabStack> createState() => _TabStackState();
+}
+
+class _TabStackState extends State<_TabStack> with SingleTickerProviderStateMixin {
+  late int _current = widget.index;
+  int? _previous;
+  late final _c = AnimationController(vsync: this, value: 1);
+
+  @override
+  void didUpdateWidget(_TabStack old) {
+    super.didUpdateWidget(old);
+    if (widget.index == _current) return;
+    _previous = _current;
+    _current = widget.index;
+    final d = Motion.of(context, 220);
+    if (d == Duration.zero) {
+      _previous = null;
+      _c.value = 1;
+      return;
+    }
+    _c
+      ..duration = d
+      ..forward(from: 0).whenCompleteOrCancel(() {
+        if (mounted) setState(() => _previous = null);
+      });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  static const _out = Interval(0, .3, curve: Motion.exit);
+  static const _inCurve = Interval(.3, 1, curve: Motion.ease);
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _c,
+    builder: (context, _) => Stack(
+      fit: StackFit.expand,
+      children: [
+        for (var i = 0; i < widget.children.length; i++)
+          Offstage(
+            offstage: i != _current && i != _previous,
+            child: TickerMode(
+              enabled: i == _current,
+              child: IgnorePointer(
+                ignoring: i != _current,
+                child: Opacity(
+                  opacity: !_c.isAnimating
+                      ? 1
+                      : i == _current
+                      ? _inCurve.transform(_c.value)
+                      : 1 - _out.transform(_c.value),
+                  child: widget.children[i],
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
 }
 
 class _TabDock extends StatelessWidget {
@@ -171,67 +255,96 @@ class _TabDock extends StatelessWidget {
         listenable: LibraryStore.instance,
         builder: (context, _) {
           final hasUpdate = LibraryStore.instance.entries.any((e) => e.hasUpdate);
-          return Row(children: [
-            Expanded(
-              child: Glass(
-                radius: 32,
-                padding: const EdgeInsets.all(5),
-                child: LayoutBuilder(
-                  builder: (context, c) {
-                    final w = c.maxWidth / 3;
-                    return Stack(children: [
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 260),
-                        curve: Curves.easeOutCubic,
-                        left: w * index,
-                        top: 0,
-                        bottom: 0,
-                        width: w,
-                        child: DecoratedBox(decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27))),
-                      ),
-                      Row(children: [
-                        for (var i = 0; i < _items.length; i++)
-                          Expanded(
-                            child: Pressable(
-                              haptic: true,
-                              semanticLabel: i == 0 && hasUpdate && index != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
-                              onTap: () => IosShell.tab.value = i,
-                              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                                Stack(clipBehavior: Clip.none, children: [
-                                  AppIcon(i == index ? _items[i].$2 : _items[i].$1, size: 23, color: i == index ? IosColors.accent : IosColors.tab, stroke: 1.7),
-                                  if (i == 0 && hasUpdate && index != 0)
-                                    Positioned(
-                                      top: -1,
-                                      right: -3,
-                                      child: Container(
-                                        width: 8,
-                                        height: 8,
-                                        decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle, border: Border.all(color: IosColors.surface, width: 1.5)),
-                                      ),
-                                    ),
-                                ]),
-                                const SizedBox(height: 2),
-                                Text(_items[i].$3,
-                                    style: TextStyle(fontSize: 11, height: 14 / 11, color: i == index ? IosColors.accent : IosColors.tab, fontWeight: i == index ? FontWeight.w600 : FontWeight.w500)),
-                              ]),
+          return Row(
+            children: [
+              Expanded(
+                child: Glass(
+                  radius: 32,
+                  padding: const EdgeInsets.all(5),
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      final w = c.maxWidth / 3;
+                      return Stack(
+                        children: [
+                          AnimatedPositioned(
+                            duration: Motion.of(context, 260),
+                            curve: Motion.ease,
+                            left: w * index,
+                            top: 0,
+                            bottom: 0,
+                            width: w,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
                             ),
                           ),
-                      ]),
-                    ]);
-                  },
+                          Row(
+                            children: [
+                              for (var i = 0; i < _items.length; i++)
+                                Expanded(
+                                  child: Pressable(
+                                    haptic: true,
+                                    pressedScale: .96,
+                                    semanticLabel: i == 0 && hasUpdate && index != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
+                                    onTap: () => IosShell.tab.value = i,
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            AppIcon(i == index ? _items[i].$2 : _items[i].$1, size: 23, color: i == index ? IosColors.accent : IosColors.tab, stroke: 1.7),
+                                            if (i == 0 && hasUpdate && index != 0)
+                                              Positioned(
+                                                top: -1,
+                                                right: -3,
+                                                child: Container(
+                                                  width: 8,
+                                                  height: 8,
+                                                  decoration: BoxDecoration(
+                                                    color: IosColors.accent,
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(color: IosColors.surface, width: 1.5),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _items[i].$3,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            height: 14 / 11,
+                                            color: i == index ? IosColors.accent : IosColors.tab,
+                                            fontWeight: i == index ? FontWeight.w600 : FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Pressable(
-              semanticLabel: '搜索',
-              onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosSearchPage())),
-              child: Glass(
-                radius: 32,
-                child: SizedBox.square(dimension: 64, child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8))),
+              const SizedBox(width: 12),
+              Pressable(
+                semanticLabel: '搜索',
+                onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+                child: Glass(
+                  radius: 32,
+                  child: SizedBox.square(
+                    dimension: 64,
+                    child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
+                  ),
+                ),
               ),
-            ),
-          ]);
+            ],
+          );
         },
       ),
     );
@@ -242,19 +355,15 @@ class _TabDock extends StatelessWidget {
 
 ComicBrief briefOfEntry(ShelfEntry e) => ComicBrief(name: e.name, pathWord: e.id, cover: e.cover, authors: [e.author]);
 
-Future<void> iosOpenDetail(BuildContext context, ComicBrief comic) =>
-    Navigator.of(context).push(CupertinoPageRoute(builder: (_) => IosDetailPage(comic: comic)));
+Future<void> iosOpenDetail(BuildContext context, ComicBrief comic) => Navigator.of(context).push(appRoute((_) => IosDetailPage(comic: comic)));
 
 Future<void> iosOpenReader(BuildContext context, {required ComicBrief comic, required String group, required String chapterUuid, int initialPage = 0}) =>
-    Navigator.of(context).push(CupertinoPageRoute(
-      builder: (_) => IosReaderPage(comic: comic, group: group, chapterUuid: chapterUuid, initialPage: initialPage),
-    ));
+    Navigator.of(context).push(readerRoute((_) => IosReaderPage(comic: comic, group: group, chapterUuid: chapterUuid, initialPage: initialPage)));
 
-Future<void> iosOpenNovel(BuildContext context) => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosNovelPage()));
+Future<void> iosOpenNovel(BuildContext context) => Navigator.of(context).push(readerRoute((_) => const IosNovelPage()));
 
 /// 源站的轻小说（书架 id 是 `wenku-<aid>`）。内置示例小说仍走 [iosOpenNovel]。
-Future<void> iosOpenWenkuNovel(BuildContext context, {required int aid, String name = ''}) =>
-    Navigator.of(context).push(CupertinoPageRoute(builder: (_) => IosWenkuNovelPage(aid: aid, name: name)));
+Future<void> iosOpenWenkuNovel(BuildContext context, {required int aid, String name = ''}) => Navigator.of(context).push(readerRoute((_) => IosWenkuNovelPage(aid: aid, name: name)));
 
 /// 继续阅读：小说进阅读器，漫画有进度进阅读器，否则进详情。
 Future<void> iosContinue(BuildContext context, ShelfEntry e) {
@@ -280,15 +389,19 @@ Future<void> showIosUpdateDialog(BuildContext context, UpdateResult r) {
     context: context,
     builder: (dialog) => CupertinoAlertDialog(
       title: Text('发现新版本 v${release.version}'),
-      content: Column(children: [
-        const SizedBox(height: 4),
-        Text(meta, style: const TextStyle(fontSize: 12)),
-        const SizedBox(height: 10),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 200),
-          child: SingleChildScrollView(child: Text(notes.isEmpty ? release.title : notes, textAlign: TextAlign.left, style: const TextStyle(fontSize: 13, height: 1.5))),
-        ),
-      ]),
+      content: Column(
+        children: [
+          const SizedBox(height: 4),
+          Text(meta, style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: SingleChildScrollView(
+              child: Text(notes.isEmpty ? release.title : notes, textAlign: TextAlign.left, style: const TextStyle(fontSize: 13, height: 1.5)),
+            ),
+          ),
+        ],
+      ),
       actions: [
         CupertinoDialogAction(
           onPressed: () {

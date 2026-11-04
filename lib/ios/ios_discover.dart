@@ -7,6 +7,7 @@ import '../core/models.dart';
 import '../core/store.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
@@ -66,7 +67,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             SliverToBoxAdapter(child: SizedBox(height: MediaQuery.paddingOf(context).top)),
             CupertinoSliverRefreshControl(onRefresh: _refresh),
             const SliverToBoxAdapter(child: LargeTitle('发现')),
-            SliverToBoxAdapter(child: _SearchField(onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosSearchPage())))),
+            SliverToBoxAdapter(child: _SearchField(onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())))),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.only(top: 10),
@@ -88,7 +89,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
     }
     return [
       SliverToBoxAdapter(
-        child: IosSection('今日更新', action: '更多', onAction: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosLatestPage()))),
+        child: IosSection('今日更新', action: '更多', onAction: () => Navigator.of(context).push(appRoute((_) => const IosLatestPage()))),
       ),
       SliverToBoxAdapter(child: SizedBox(height: 206, child: _latestRow())),
       const SliverToBoxAdapter(child: IosSection('人气排行', note: '按人气增长')),

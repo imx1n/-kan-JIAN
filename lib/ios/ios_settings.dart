@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../core/store.dart';
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import 'ios_novel.dart' show novelPaperName, showNovelAppearance;
 import 'ios_theme.dart';
 
@@ -44,7 +45,7 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
-void _push(BuildContext context, Widget page) => Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => page));
+void _push(BuildContext context, Widget page) => Navigator.of(context).push(appRoute<void>((_) => page));
 
 Future<void> _pick(BuildContext context, String title, List<String> options, int selected, ValueChanged<int> onPick) async {
   final i = await showIosChoices(context, title: title, options: options, selected: selected);
