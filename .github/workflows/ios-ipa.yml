@@ -50,4 +50,18 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "$IPA" --clobber
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$RELEASE_TAG" "$IPA" --clobber; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((attempt * 10))
+              echo "::warning::IPA upload attempt $attempt/5 failed; retrying in $delay seconds."
+              sleep "$delay"
+            fi
+          done
+          echo "::error::Failed to attach IPA to Release $RELEASE_TAG after 5 attempts."
+          exit 1
