@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pastemangax/core/models.dart';
 import 'package:pastemangax/core/store.dart';
-import 'package:pastemangax/ui/theme.dart';
+import 'package:pastemangax/ui/format.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> fixture(String name, {bool envelope = true}) {
@@ -136,6 +136,40 @@ void main() {
       expect(e.started, isFalse);
       expect(e.latestCount, 16);
       expect(store.readChapterCount, 0);
+    });
+
+    test('阅读只记位置，不会自动追更', () {
+      final store = LibraryStore.instance;
+      final d = detailWith(16);
+      final pw = d.comic.pathWord;
+      ShelfEntry create() => ShelfEntry(id: pw, kind: ShelfKind.manga, name: d.comic.name, cover: '', author: '', followed: false);
+      store.recordPosition(id: pw, create: create, chapterUuid: 'u', chapterName: '第3话', chapterIndex: 2, page: 4, pageCount: 10, progress: .5);
+      expect(store.entry(pw)!.page, 4);
+      expect(store.isFollowed(pw), isFalse);
+      expect(store.entries, isEmpty);
+
+      // 读过之后再追更：保留阅读位置。
+      store.follow(d);
+      expect(store.isFollowed(pw), isTrue);
+      expect(store.entries.single.chapterName, '第3话');
+
+      // 取消追更：移出书架，但还记得读到哪。
+      store.unfollow(pw);
+      expect(store.entries, isEmpty);
+      expect(store.entry(pw)!.chapterName, '第3话');
+
+      // 清除阅读记录：没追更的作品整条删掉。
+      store.clearHistory();
+      expect(store.entry(pw), isNull);
+    });
+
+    test('没读过的作品取消追更后不留记录；旧数据默认已追更', () {
+      final store = LibraryStore.instance;
+      final d = detailWith(16);
+      store.follow(d);
+      store.unfollow(d.comic.pathWord);
+      expect(store.entry(d.comic.pathWord), isNull);
+      expect(ShelfEntry.fromJson({'id': 'x', 'kind': 'manga', 'name': 'x'}).followed, isTrue);
     });
 
     test('搜索历史去重、最多 8 条、新的在前', () {

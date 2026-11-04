@@ -5,12 +5,13 @@ import '../core/api.dart';
 import '../core/models.dart';
 import '../core/shelf_sync.dart';
 import '../core/store.dart';
+import '../ui/format.dart' show formatDay;
 import '../ui/icons.dart';
-import '../ui/theme.dart' show formatDay;
 import '../ui/widgets.dart' show CoverImage;
 import 'ios_app.dart';
 import 'ios_search.dart';
 import 'ios_theme.dart';
+import 'ios_wenku.dart';
 
 class IosShelfPage extends StatefulWidget {
   const IosShelfPage({super.key});
@@ -78,7 +79,7 @@ class _IosShelfPageState extends State<IosShelfPage> {
     if (!mounted || i == null) return;
     if (i == 0) iosContinue(context, e);
     if (options[i] == '查看详情') iosOpenDetail(context, briefOfEntry(e));
-    if (i == options.length - 1) _store.remove(e.id);
+    if (i == options.length - 1) _store.unfollow(e.id);
   }
 
   @override
@@ -167,11 +168,11 @@ class _Resume extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const SizedBox(height: 2),
-            const Text('最近在读', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+            Text('最近在读', style: TextStyle(fontSize: 13, color: IosColors.muted)),
             const SizedBox(height: 4),
-            Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 24, height: 1.25, fontWeight: FontWeight.w700, color: IosColors.ink)),
+            Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, height: 1.25, fontWeight: FontWeight.w700, color: IosColors.ink)),
             const SizedBox(height: 6),
-            Text(where, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text(where, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, color: IosColors.muted)),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(
@@ -181,12 +182,12 @@ class _Resume extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Text('${(e.progress * 100).round()}%', style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+              Text('${(e.progress * 100).round()}%', style: TextStyle(fontSize: 13, color: IosColors.muted)),
             ]),
             const SizedBox(height: 12),
             Pressable(
               onTap: () => iosContinue(context, e),
-              child: const Glass(
+              child: Glass(
                 radius: 22,
                 padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -220,18 +221,18 @@ class _UpdateRow extends StatelessWidget {
             Expanded(
               child: Container(
                 padding: const EdgeInsets.fromLTRB(0, 12, 20, 12),
-                decoration: BoxDecoration(border: last ? null : const Border(bottom: BorderSide(color: IosColors.line, width: .5))),
+                decoration: BoxDecoration(border: last ? null : Border(bottom: BorderSide(color: IosColors.line, width: .5))),
                 child: Row(children: [
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                      Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.ink)),
                       const SizedBox(height: 3),
                       Text('更新至 ${entry.latestChapter} · ${formatDay(entry.latestUpdated)}',
-                          maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+                          maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
                     ]),
                   ),
                   const SizedBox(width: 10),
-                  Text('新 ${entry.newCount} 话', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: IosColors.accent)),
+                  Text('新 ${entry.newCount} 话', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: IosColors.accent)),
                 ]),
               ),
             ),
@@ -269,7 +270,7 @@ class _Tile extends StatelessWidget {
                   child: Container(
                     width: 12,
                     height: 12,
-                    decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
+                    decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle, border: Border.all(color: IosColors.surface, width: 2)),
                   ),
                 ),
               if (e.started && e.progress > 0 && e.progress < 1)
@@ -286,9 +287,9 @@ class _Tile extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, height: 1.3, color: IosColors.ink)),
+        Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, height: 1.3, color: IosColors.ink)),
         const SizedBox(height: 2),
-        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
       ]),
     );
   }
@@ -306,9 +307,13 @@ class _FilterEmpty extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
             updated ? '追更的作品暂时都没有新话，下拉可以重新检查。' : (novel ? '书架上还没有轻小说。' : '没有符合条件的作品。'),
-            style: const TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted),
+            style: TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted),
           ),
-          if (novel) TextAction(label: '打开示例《雨停之前》', onTap: () => iosOpenNovel(context)),
+          if (novel) ...[
+            TextAction(label: '登录轻小说账号，同步源站书架', onTap: () => Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => const IosWenkuPage()))),
+            const SizedBox(height: 10),
+            TextAction(label: '打开示例《雨停之前》', onTap: () => iosOpenNovel(context)),
+          ],
         ]),
       );
 }
@@ -341,7 +346,7 @@ class _FirstRunState extends State<_FirstRun> {
           future: _top,
           builder: (context, snap) {
             if (snap.hasError) {
-              return const Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Text('暂时拿不到推荐', style: TextStyle(fontSize: 13, color: IosColors.muted)));
+              return Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Text('暂时拿不到推荐', style: TextStyle(fontSize: 13, color: IosColors.muted)));
             }
             final items = snap.data?.list;
             return Padding(
@@ -360,7 +365,7 @@ class _FirstRunState extends State<_FirstRun> {
                                 child: LayoutBuilder(builder: (context, c) => CoverImage(url: items[i].comic.cover, title: items[i].comic.name, width: c.maxWidth, height: c.maxHeight, radius: 6)),
                               ),
                               const SizedBox(height: 7),
-                              Text(items[i].comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, color: IosColors.ink)),
+                              Text(items[i].comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, color: IosColors.ink)),
                             ]),
                           ),
                   ),

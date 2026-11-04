@@ -7,12 +7,13 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import '../core/api.dart';
+import '../core/chapter_browser.dart';
 import '../core/config.dart';
 import '../core/models.dart';
 import '../core/store.dart';
-import '../pages/chapter_pager.dart' show ChapterBrowser, revealChapterRow;
-import '../pages/zoomable_page.dart';
 import '../ui/icons.dart';
+import '../ui/widgets.dart' show revealChapterRow;
+import '../ui/zoomable_page.dart';
 import 'ios_app.dart';
 import 'ios_detail.dart' show IosChapterRow;
 import 'ios_theme.dart';
@@ -51,7 +52,7 @@ class _IosReaderPageState extends State<IosReaderPage> {
   void initState() {
     super.initState();
     _prefs.addListener(_onPrefs);
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(kDarkChrome);
     _load(widget.chapterUuid, page: widget.initialPage);
   }
 
@@ -59,7 +60,7 @@ class _IosReaderPageState extends State<IosReaderPage> {
   void dispose() {
     _prefs.removeListener(_onPrefs);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
     _pager?.dispose();
     _scroll.dispose();
     super.dispose();
@@ -108,7 +109,7 @@ class _IosReaderPageState extends State<IosReaderPage> {
     final store = LibraryStore.instance;
     store.recordPosition(
       id: widget.comic.pathWord,
-      create: () => ShelfEntry(id: widget.comic.pathWord, kind: ShelfKind.manga, name: widget.comic.name, cover: widget.comic.cover, author: widget.comic.authorText),
+      create: () => ShelfEntry(id: widget.comic.pathWord, kind: ShelfKind.manga, name: widget.comic.name, cover: widget.comic.cover, author: widget.comic.authorText, followed: false),
       chapterUuid: c.chapter.uuid,
       chapterName: c.chapter.name,
       chapterIndex: c.chapter.index,
@@ -557,7 +558,7 @@ class _ReadingSettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = ReaderPrefs.instance;
-    Widget label(String t) => Padding(padding: const EdgeInsets.fromLTRB(4, 18, 4, 8), child: Text(t, style: const TextStyle(fontSize: 13, color: IosColors.muted)));
+    Widget label(String t) => Padding(padding: const EdgeInsets.fromLTRB(4, 18, 4, 8), child: Text(t, style: TextStyle(fontSize: 13, color: IosColors.muted)));
     return ListenableBuilder(
       listenable: p,
       builder: (context, _) => Padding(
@@ -568,7 +569,7 @@ class _ReadingSettingsSheet extends StatelessWidget {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Center(child: Container(width: 36, height: 5, margin: const EdgeInsets.only(bottom: 8), decoration: BoxDecoration(color: const Color(0x33000000), borderRadius: BorderRadius.circular(3)))),
             Row(children: [
-              const Text('阅读设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              Text('阅读设置', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: IosColors.ink)),
               const Spacer(),
               TextAction(label: '完成', onTap: () => Navigator.pop(context)),
             ]),
@@ -584,14 +585,14 @@ class _ReadingSettingsSheet extends StatelessWidget {
               decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
               child: Column(children: [
                 Row(children: [
-                  const Text('页面亮度', style: TextStyle(fontSize: 15, color: IosColors.ink)),
+                  Text('页面亮度', style: TextStyle(fontSize: 15, color: IosColors.ink)),
                   const Spacer(),
-                  Text('${(p.mangaBrightness * 100).round()}%', style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+                  Text('${(p.mangaBrightness * 100).round()}%', style: TextStyle(fontSize: 15, color: IosColors.muted)),
                 ]),
                 SizedBox(width: double.infinity, child: CupertinoSlider(value: p.mangaBrightness, min: .3, max: 1, activeColor: IosColors.accent, onChanged: (v) => p.mangaBrightness = v)),
               ]),
             ),
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(4, 10, 4, 0),
               child: Text('源站只提供 800px（省流）和 1500px（标准）两种画质。页面亮度只调暗画面，不改变系统亮度。', style: TextStyle(fontSize: 13, height: 1.45, color: IosColors.muted)),
             ),

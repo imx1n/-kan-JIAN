@@ -5,8 +5,8 @@ import '../core/api.dart';
 import '../core/config.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
-import '../ui/theme.dart' show formatPopular;
 import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
@@ -123,9 +123,9 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
           child: Row(children: [
-            Text(name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
+            Text(name, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
             const SizedBox(width: 8),
-            if (pager.total > 0) Text('${pager.total} 部', style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            if (pager.total > 0) Text('${pager.total} 部', style: TextStyle(fontSize: 15, color: IosColors.muted)),
             const Spacer(),
             SizedBox(
               width: 140,
@@ -188,9 +188,9 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         CoverImage(url: list[i].cover, title: list[i].name, width: 104, height: 140, radius: 6),
                         const SizedBox(height: 7),
-                        Text(list[i].name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, height: 1.3, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                        Text(list[i].name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, height: 1.3, fontWeight: FontWeight.w600, color: IosColors.ink)),
                         const SizedBox(height: 2),
-                        Text(list[i].authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: IosColors.muted)),
+                        Text(list[i].authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: IosColors.muted)),
                       ]),
                     ),
             ),
@@ -213,7 +213,7 @@ class _SearchField extends StatelessWidget {
           child: Container(
             height: 44,
             decoration: BoxDecoration(color: IosColors.faint, borderRadius: BorderRadius.circular(12)),
-            child: const Row(children: [
+            child: Row(children: [
               SizedBox(width: 12),
               AppIcon('search', size: 18, color: IosColors.muted, stroke: 1.9),
               SizedBox(width: 8),
@@ -238,7 +238,7 @@ class _RankRow extends StatelessWidget {
         ? Container(
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
             decoration: BoxDecoration(color: IosColors.accentSoft, borderRadius: BorderRadius.circular(6)),
-            child: const Text('新', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: IosColors.accent)),
+            child: Text('新', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: IosColors.accent)),
           )
         : Text(
             r.rise > 0 ? '▲${r.rise}' : (r.rise < 0 ? '▼${-r.rise}' : '—'),
@@ -259,15 +259,15 @@ class _RankRow extends StatelessWidget {
           Expanded(
             child: Container(
               padding: const EdgeInsets.fromLTRB(0, 12, 20, 12),
-              decoration: BoxDecoration(border: last ? null : const Border(bottom: BorderSide(color: IosColors.line, width: .5))),
+              decoration: BoxDecoration(border: last ? null : Border(bottom: BorderSide(color: IosColors.line, width: .5))),
               child: Row(children: [
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(r.comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                    Text(r.comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.ink)),
                     const SizedBox(height: 3),
-                    Text(r.comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+                    Text(r.comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
                     const SizedBox(height: 2),
-                    Text('人气 ${formatPopular(r.comic.popular)}', style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+                    Text('人气 ${formatPopular(r.comic.popular)}', style: TextStyle(fontSize: 13, color: IosColors.muted)),
                   ]),
                 ),
                 const SizedBox(width: 8),
@@ -295,9 +295,9 @@ class _GridTile extends StatelessWidget {
             child: LayoutBuilder(builder: (context, c) => CoverImage(url: comic.cover, title: comic.name, width: c.maxWidth, height: c.maxHeight, radius: 6)),
           ),
           const SizedBox(height: 7),
-          Text(comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: IosColors.ink)),
+          Text(comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: IosColors.ink)),
           const SizedBox(height: 2),
-          Text(comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: IosColors.muted)),
+          Text(comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: IosColors.muted)),
         ]),
       );
 }
@@ -345,7 +345,7 @@ class _Footer extends StatelessWidget {
     if (pager.items.isEmpty) return const SizedBox.shrink();
     if (pager.error != null) return Center(child: TextAction(label: '加载失败，点按重试', onTap: pager.loadMore));
     if (pager.loading) return const Padding(padding: EdgeInsets.all(20), child: CupertinoActivityIndicator());
-    if (!pager.hasMore) return const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('已经到底了', style: TextStyle(fontSize: 13, color: IosColors.muted))));
+    if (!pager.hasMore) return Padding(padding: EdgeInsets.all(24), child: Center(child: Text('已经到底了', style: TextStyle(fontSize: 13, color: IosColors.muted))));
     return const SizedBox(height: 40);
   }
 }
@@ -388,9 +388,9 @@ class _IosNetworkErrorState extends State<IosNetworkError> {
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Text('连接详情', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+              Text('连接详情', style: TextStyle(fontSize: 13, color: IosColors.muted)),
               const SizedBox(width: 4),
-              AnimatedRotation(turns: _open ? .5 : 0, duration: const Duration(milliseconds: 180), child: const AppIcon('down', size: 13, color: IosColors.muted, stroke: 2)),
+              AnimatedRotation(turns: _open ? .5 : 0, duration: const Duration(milliseconds: 180), child: AppIcon('down', size: 13, color: IosColors.muted, stroke: 2)),
             ]),
           ),
         ),
@@ -403,7 +403,7 @@ class _IosNetworkErrorState extends State<IosNetworkError> {
                   if (at != null)
                     IosRow(
                       title: '最近一次失败',
-                      valueWidget: Text('${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}', style: const TextStyle(fontSize: 15, color: IosColors.accent)),
+                      valueWidget: Text('${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}', style: TextStyle(fontSize: 15, color: IosColors.accent)),
                       chevron: false,
                     ),
                 ])

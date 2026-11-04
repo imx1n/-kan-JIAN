@@ -1,17 +1,13 @@
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/account.dart';
 import 'core/store.dart';
+import 'core/wenku.dart';
+import 'core/wenku_web.dart';
 import 'ios/ios_app.dart';
-import 'pages/home_shell.dart';
-import 'ui/theme.dart';
-
-/// iOS 用 iOS 26 设计稿的界面，其余平台用安卓（Material 3）界面。
-/// `--dart-define=FORCE_IOS_UI=true` 可以在安卓设备上预览 iOS 界面。
-bool get useIosUi => defaultTargetPlatform == TargetPlatform.iOS || const bool.fromEnvironment('FORCE_IOS_UI');
 
 /// 让 dio 与图片加载（dart:io HttpClient）统一走代理，失败时回退直连。
 class _ProxyOverrides extends HttpOverrides {
@@ -24,34 +20,17 @@ class _ProxyOverrides extends HttpOverrides {
       super.createHttpClient(context)..findProxy = (_) => 'PROXY $proxy; DIRECT';
 }
 
+/// Android 和 iOS 用同一套界面（按 iOS 26 设计稿实现，代码在 lib/ios）。
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initStores();
+  await AccountService.instance.load();
+  await WenkuService.instance.load();
+  WenkuService.web = WenkuWebFetcher.instance;
   final proxy = ReaderPrefs.instance.proxy;
   if (proxy.isNotEmpty) HttpOverrides.global = _ProxyOverrides(proxy);
-  // 界面按竖屏手机设计。
+  // 界面按竖屏手机设计；内容画到系统栏后面，悬浮标签栏自己避让手势条。
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  if (useIosUi) {
-    runApp(const IosApp());
-    return;
-  }
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: Palette.bar,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
-  runApp(const ShioriApp());
-}
-
-class ShioriApp extends StatelessWidget {
-  const ShioriApp({super.key});
-
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: '栞间',
-        debugShowCheckedModeBanner: false,
-        theme: buildTheme(),
-        home: const HomeShell(),
-      );
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  runApp(const IosApp());
 }

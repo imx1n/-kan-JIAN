@@ -170,3 +170,14 @@ class UpdateService {
     return r;
   }
 }
+
+/// Release 说明是 Markdown；弹窗里只需要可读的纯文本：去掉标题井号、把列表符号换成圆点。
+String plainNotes(String md) => md
+    .split('\n')
+    .map((l) => l.trimRight())
+    .map((l) => l.replaceFirst(RegExp(r'^#{1,6}\s*'), ''))
+    .map((l) => l.replaceFirst(RegExp(r'^\s*[-*+]\s+'), '• '))
+    .map((l) => l.replaceAll(RegExp(r'\*\*|__|`'), ''))
+    .join('\n')
+    .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+    .trim();

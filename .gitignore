@@ -52,3 +52,6 @@ app.*.map.json
 key.properties
 *.jks
 *.keystore
+
+# 本机构建产物
+/android/build/

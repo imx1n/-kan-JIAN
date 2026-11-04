@@ -20,6 +20,9 @@ class AppConfig {
     'referer': 'com.copymanga.app-3.1.0',
   };
 
+  /// 网页端主机：账号登录走这里（App 端登录需要额外的加密值，没有打通）。
+  static const webHost = 'https://www.copy4000.com';
+
   static const imageHeaders = <String, String>{'User-Agent': 'COPY/3.1.0'};
 
   /// 编译期默认代理，例如 MuMu 内访问宿主机 Clash：

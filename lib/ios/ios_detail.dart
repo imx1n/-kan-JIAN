@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../core/api.dart';
+import '../core/chapter_browser.dart';
 import '../core/models.dart';
 import '../core/store.dart';
-import '../pages/chapter_pager.dart' show ChapterBrowser, revealChapterRow;
+import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
-import '../ui/theme.dart' show formatPopular;
-import '../ui/widgets.dart' show CoverImage;
+import '../ui/widgets.dart' show CoverImage, revealChapterRow;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
 import 'ios_theme.dart';
@@ -83,8 +83,8 @@ class _IosDetailPageState extends State<IosDetailPage> {
   void _toggleFollow() {
     final d = _detail;
     if (d == null) return;
-    if (_store.contains(_pw)) {
-      _store.remove(_pw);
+    if (_store.isFollowed(_pw)) {
+      _store.unfollow(_pw);
       showIosToast(context, '已取消追更');
     } else {
       _store.follow(d);
@@ -117,7 +117,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
   }
 
   Future<void> _menu() async {
-    final following = _store.contains(_pw);
+    final following = _store.isFollowed(_pw);
     final i = await showIosChoices(context, title: _comic.name, options: ['刷新', following ? '取消追更' : '追更'], destructiveIndex: following ? 1 : null);
     if (i == 0) _load();
     if (i == 1) _toggleFollow();
@@ -165,7 +165,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
           right: 16,
           child: Row(children: [
             GlassButton(icon: 'chevronLeft', label: '返回', onTap: () => Navigator.pop(context)),
-            const Expanded(child: Text('作品详情', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.ink))),
+            Expanded(child: Text('作品详情', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.ink))),
             GlassButton(icon: 'ellipsis', label: '更多操作', onTap: _detail == null ? null : _menu),
           ]),
         ),
@@ -188,12 +188,12 @@ class _IosDetailPageState extends State<IosDetailPage> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             if (d != null) Text([d.status, d.region].where((s) => s.isNotEmpty).join(' · '), style: TextStyle(fontSize: 13, color: d.finished ? IosColors.muted : IosColors.accent)),
             const SizedBox(height: 6),
-            Text(_comic.name, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 26, height: 1.2, fontWeight: FontWeight.w700, color: IosColors.ink)),
+            Text(_comic.name, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 26, height: 1.2, fontWeight: FontWeight.w700, color: IosColors.ink)),
             const SizedBox(height: 8),
-            Text(_comic.authorText, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text(_comic.authorText, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, color: IosColors.muted)),
             if (d != null) ...[
               const SizedBox(height: 4),
-              Text('人气 ${formatPopular(d.comic.popular)}', style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+              Text('人气 ${formatPopular(d.comic.popular)}', style: TextStyle(fontSize: 15, color: IosColors.muted)),
               const SizedBox(height: 10),
               Pressable(
                 haptic: true,
@@ -204,7 +204,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     AppIcon(following ? 'bookmarkFilled' : 'bookmark', size: 19, color: IosColors.accent, stroke: 1.8),
                     const SizedBox(width: 6),
-                    Text(following ? '已追更' : '追更', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                    Text(following ? '已追更' : '追更', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink)),
                   ]),
                 ),
               ),
@@ -224,30 +224,30 @@ class _IosDetailPageState extends State<IosDetailPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(color: IosColors.faint, borderRadius: BorderRadius.circular(8)),
-                  child: Text(t, style: const TextStyle(fontSize: 13, color: IosColors.ink)),
+                  child: Text(t, style: TextStyle(fontSize: 13, color: IosColors.ink)),
                 ),
             ]),
           const SizedBox(height: 16),
           Row(children: [
-            const Text('更新至 ', style: TextStyle(fontSize: 15, color: IosColors.muted)),
-            Expanded(child: Text(d.lastChapter, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink))),
-            Text(d.comic.updated, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+            Text('更新至 ', style: TextStyle(fontSize: 15, color: IosColors.muted)),
+            Expanded(child: Text(d.lastChapter, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink))),
+            Text(d.comic.updated, style: TextStyle(fontSize: 13, color: IosColors.muted)),
           ]),
           if (d.aliases.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text('又名 ${d.aliases.join(' · ')}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+            Text('又名 ${d.aliases.join(' · ')}', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
           ],
           if (d.brief.isNotEmpty) ...[
             const SizedBox(height: 18),
             Row(children: [
-              const Text('简介', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              Text('简介', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.ink)),
               const Spacer(),
               Pressable(
                 onTap: () => setState(() => _briefOpen = !_briefOpen),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(_briefOpen ? '收起' : '展开', style: const TextStyle(fontSize: 15, color: IosColors.accent)),
+                  Text(_briefOpen ? '收起' : '展开', style: TextStyle(fontSize: 15, color: IosColors.accent)),
                   const SizedBox(width: 2),
-                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: const Duration(milliseconds: 180), child: const AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
+                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: const Duration(milliseconds: 180), child: AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
                 ]),
               ),
             ]),
@@ -258,7 +258,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
               child: Text(d.brief,
                   maxLines: _briefOpen ? null : 2,
                   overflow: _briefOpen ? null : TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted)),
+                  style: TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted)),
             ),
           ],
         ]),
@@ -270,24 +270,24 @@ class _IosDetailPageState extends State<IosDetailPage> {
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          const Text('目录', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: IosColors.ink)),
+          Text('目录', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: IosColors.ink)),
           const SizedBox(width: 8),
-          Text('共 ${d.chapterCount} 条', style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+          Text('共 ${d.chapterCount} 条', style: TextStyle(fontSize: 13, color: IosColors.muted)),
           const Spacer(),
           Pressable(
             onTap: _browser.toggleOrder,
             child: Padding(
               padding: const EdgeInsets.all(8),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const AppIcon('sort', size: 16, color: IosColors.accent, stroke: 1.9),
+                AppIcon('sort', size: 16, color: IosColors.accent, stroke: 1.9),
                 const SizedBox(width: 4),
-                Text(_browser.descending ? '降序' : '升序', style: const TextStyle(fontSize: 15, color: IosColors.accent)),
+                Text(_browser.descending ? '降序' : '升序', style: TextStyle(fontSize: 15, color: IosColors.accent)),
               ]),
             ),
           ),
           Pressable(
             onTap: _locate,
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.all(8),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 AppIcon('locate', size: 16, color: IosColors.accent, stroke: 1.9),
@@ -298,8 +298,9 @@ class _IosDetailPageState extends State<IosDetailPage> {
           ),
         ]),
         if (d.groups.length > 1) ...[
-          const SizedBox(height: 10),
-          IosSegmented(
+          const SizedBox(height: 4),
+          UnderlineTabs(
+            padding: EdgeInsets.zero,
             options: [for (final g in d.groups) g.name],
             counts: [for (final g in d.groups) g.count],
             selected: d.groups.indexWhere((g) => g.pathWord == _browser.group).clamp(0, d.groups.length - 1),
@@ -308,11 +309,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
         ],
         if (ranges.length > 1) ...[
           const SizedBox(height: 14),
-          const Row(children: [
-            Text('条目序号', style: TextStyle(fontSize: 13, color: IosColors.muted)),
-            Spacer(),
-            Text('按源站顺序', style: TextStyle(fontSize: 13, color: IosColors.muted)),
-          ]),
+          Text('条目序号', style: TextStyle(fontSize: 13, color: IosColors.muted)),
           const SizedBox(height: 6),
           SizedBox(
             height: 40,
@@ -383,7 +380,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
       );
     }
     if (_detail?.isLock ?? false) {
-      return const Padding(
+      return Padding(
         padding: EdgeInsets.fromLTRB(20, 14, 20, 0),
         child: Text('源站把这部作品标记为付费或会员内容，栞间不提供绕过方式。', style: TextStyle(fontSize: 13, color: IosColors.accent)),
       );
@@ -393,38 +390,44 @@ class _IosDetailPageState extends State<IosDetailPage> {
 
   Widget _resumeBar(ShelfEntry? entry, bool locked) {
     final started = entry?.chapterUuid != null;
+    final title = started ? entry!.chapterName ?? '' : (locked ? '暂不可读' : '还没有开始读');
     final sub = started
-        ? '${entry!.chapterName}${entry.pageCount > 0 ? ' · ${entry.page + 1} / ${entry.pageCount} 页' : ''}'
+        ? (entry!.pageCount > 0 ? '上次读到 ${entry.page + 1} / ${entry.pageCount} 页' : '上次读到这一话')
         : (locked ? '源站标记为付费内容' : '从第一条开始');
     final bottom = MediaQuery.paddingOf(context).bottom;
     return Positioned(
       left: 16,
       right: 16,
       bottom: bottom > 0 ? bottom - 6 : 16,
-      child: Pressable(
-        onTap: locked ? null : _resume,
-        semanticLabel: started ? '继续阅读' : '开始阅读',
-        child: Glass(
-          radius: 32,
-          padding: const EdgeInsets.fromLTRB(10, 10, 20, 10),
-          child: Row(children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: const BoxDecoration(color: IosColors.accentSoft, shape: BoxShape.circle),
-              child: const Center(child: AppIcon('play', size: 16, color: IosColors.accent)),
+      // 左边说明读到哪，右边是唯一的主操作按钮。
+      child: Glass(
+        radius: 32,
+        padding: const EdgeInsets.fromLTRB(20, 10, 10, 10),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              const SizedBox(height: 2),
+              Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
+            ]),
+          ),
+          const SizedBox(width: 12),
+          Opacity(
+            opacity: locked ? .4 : 1,
+            child: Pressable(
+              onTap: locked ? null : _resume,
+              child: Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 26),
+                decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(24)),
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(started ? '继续阅读' : '开始阅读', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.onAccent)),
+                ),
+              ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text(started ? '继续阅读' : '开始阅读', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.accent)),
-                const SizedBox(height: 2),
-                Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
-              ]),
-            ),
-            const AppIcon('arrow', size: 20, color: IosColors.accent, stroke: 1.9),
-          ]),
-        ),
+          ),
+        ]),
       ),
     );
   }

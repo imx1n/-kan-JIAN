@@ -5,12 +5,15 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/account.dart';
 import '../core/api.dart';
 import '../core/config.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
-import '../ui/theme.dart' show formatBytes;
+import '../ui/format.dart' show formatBytes;
+import 'ios_account.dart';
 import 'ios_app.dart';
+import 'ios_settings.dart';
 import 'ios_theme.dart';
 
 /// 修改网络代理。默认「跟随系统」：系统 VPN 类代理会自动生效；需要 HTTP 代理时再填 host:port。
@@ -39,6 +42,7 @@ class IosMinePage extends StatefulWidget {
 class _IosMinePageState extends State<IosMinePage> {
   final _prefs = ReaderPrefs.instance;
   final _store = LibraryStore.instance;
+  final _account = AccountService.instance;
   String? _ping;
   bool _pingOk = false;
   bool _pinging = false;
@@ -53,6 +57,7 @@ class _IosMinePageState extends State<IosMinePage> {
     super.initState();
     _prefs.addListener(_changed);
     _store.addListener(_changed);
+    _account.addListener(_changed);
     IosShell.tab.addListener(_onTab);
     UpdateService.instance.currentVersion().then((v) {
       if (mounted) setState(() => _version = v);
@@ -63,6 +68,7 @@ class _IosMinePageState extends State<IosMinePage> {
   void dispose() {
     _prefs.removeListener(_changed);
     _store.removeListener(_changed);
+    _account.removeListener(_changed);
     IosShell.tab.removeListener(_onTab);
     super.dispose();
   }
@@ -128,10 +134,7 @@ class _IosMinePageState extends State<IosMinePage> {
     if (ok == true) _store.clearHistory();
   }
 
-  Future<void> _pick(String title, List<String> options, int selected, ValueChanged<int> onPick) async {
-    final i = await showIosChoices(context, title: title, options: options, selected: selected);
-    if (i != null) onPick(i);
-  }
+  void _open(Widget page) => Navigator.of(context).push(CupertinoPageRoute<void>(builder: (_) => page));
 
   Future<void> _checkUpdate() async {
     setState(() => _checking = true);
@@ -146,36 +149,22 @@ class _IosMinePageState extends State<IosMinePage> {
 
   @override
   Widget build(BuildContext context) {
-    const papers = {0: '纸白', 1: '暖纸', 2: '纸白', 3: '深色'};
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top, bottom: 130),
       children: [
         const LargeTitle('我的'),
-        InsetGroup(title: '阅读', children: [
+        InsetGroup(title: '偏好设置', children: [
+          IosRow(icon: 'sun', title: '外观设置', subtitle: '深色模式、透明度', onTap: () => _open(const IosAppearancePage())),
+          IosRow(icon: 'book', title: '阅读设置', subtitle: '翻页方式、画质、小说排版', onTap: () => _open(const IosReadingSettingsPage())),
           IosRow(
-            icon: 'direction',
-            title: '漫画翻页方向',
-            value: _prefs.mangaRtl ? '从右向左' : '从左向右',
-            onTap: () => _pick('漫画翻页方向', const ['从右向左', '从左向右'], _prefs.mangaRtl ? 0 : 1, (i) => _prefs.mangaRtl = i == 0),
+            icon: 'person',
+            title: '账号同步',
+            subtitle: _account.loggedIn ? '已登录 ${_account.displayName}' : '登录拷贝漫画，同步书架和历史',
+            onTap: () => _open(const IosAccountPage()),
           ),
-          IosRow(
-            icon: 'pages',
-            title: '默认阅读方式',
-            subtitle: '阅读器里也可以随时切换',
-            value: _prefs.mangaScroll ? '条漫' : '单页',
-            onTap: () => _pick('默认阅读方式', const ['单页', '条漫'], _prefs.mangaScroll ? 1 : 0, (i) => _prefs.mangaScroll = i == 1),
-          ),
-          IosRow(
-            icon: 'image',
-            title: '图片画质',
-            subtitle: '省流 800px · 标准 1500px',
-            value: _prefs.mangaSaver ? '省流' : '标准',
-            onTap: () => _pick('图片画质', const ['省流', '标准'], _prefs.mangaSaver ? 0 : 1, (i) => _prefs.mangaSaver = i == 0),
-          ),
-          IosRow(icon: 'type', title: '轻小说外观', value: '${papers[_prefs.theme] ?? '纸白'} · ${_prefs.fontSize.round()} 磅', onTap: () => iosOpenNovel(context)),
         ]),
-        InsetGroup(title: '网络', footer: '留空网络代理即跟随系统，VPN 类代理会自动生效。', children: [
+        InsetGroup(title: '网络', children: [
           IosRow(
             icon: 'globe',
             title: '数据源',
@@ -199,7 +188,7 @@ class _IosMinePageState extends State<IosMinePage> {
             icon: 'history',
             title: '阅读记录',
             subtitle: '书架 ${_store.entries.length} 部 · 已读 ${_store.readChapterCount} 话',
-            valueWidget: const Text('清除', style: TextStyle(fontSize: 15, color: IosColors.accent)),
+            valueWidget: Text('清除', style: TextStyle(fontSize: 15, color: IosColors.accent)),
             chevron: false,
             onTap: _clearHistory,
           ),

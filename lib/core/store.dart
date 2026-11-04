@@ -16,7 +16,13 @@ Future<void> initStores() async {
 
 enum ShelfKind { manga, novel }
 
-/// 书架上的一本作品：阅读位置 + 追更状态。
+/// 轻小说在书架里的 id：`wenku-<aid>`。内置示例小说用的是固定 id，两者不会撞。
+String wenkuIdOf(int aid) => 'wenku-$aid';
+
+/// 从书架 id 还原源站的书号；不是轻小说时返回 null。
+int? wenkuAidOf(String id) => id.startsWith('wenku-') ? int.tryParse(id.substring(6)) : null;
+
+/// 一部作品的阅读位置和追更状态。只有 [followed] 的作品出现在书架上、参与追更同步。
 class ShelfEntry {
   ShelfEntry({
     required this.id,
@@ -36,6 +42,7 @@ class ShelfEntry {
     this.latestUpdated = '',
     this.latestCount = 0,
     this.seenCount = 0,
+    this.followed = true,
     int? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -68,6 +75,9 @@ class ShelfEntry {
 
   /// 用户上次看到这部作品时的章节总数。
   int seenCount;
+
+  /// 是否追更。只读过、没点追更的作品只保留阅读位置。
+  bool followed;
 
   bool get started => chapterUuid != null;
 
@@ -104,6 +114,7 @@ class ShelfEntry {
         'latestUpdated': latestUpdated,
         'latestCount': latestCount,
         'seenCount': seenCount,
+        'followed': followed,
       };
 
   factory ShelfEntry.fromJson(Map<String, dynamic> j) => ShelfEntry(
@@ -125,6 +136,8 @@ class ShelfEntry {
         latestUpdated: j['latestUpdated'] as String? ?? '',
         latestCount: j['latestCount'] as int? ?? 0,
         seenCount: j['seenCount'] as int? ?? 0,
+        // 旧数据没有这个字段，都视为已追更，书架内容不变。
+        followed: j['followed'] as bool? ?? true,
       );
 }
 
@@ -140,6 +153,8 @@ class LibraryStore extends ChangeNotifier {
   final _read = <String, Set<String>>{};
 
   void _load() {
+    _entries.clear();
+    _read.clear();
     final raw = _prefs.getString(_kShelf);
     if (raw != null) {
       for (final e in (jsonDecode(raw) as List)) {
@@ -159,12 +174,13 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 最近阅读在前。
-  List<ShelfEntry> get entries => _entries.values.toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  /// 书架上的作品（已追更），最近阅读在前。
+  List<ShelfEntry> get entries => _entries.values.where((e) => e.followed).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
+  /// 阅读位置和追更信息；没追更但读过的作品也有。
   ShelfEntry? entry(String id) => _entries[id];
 
-  bool contains(String id) => _entries.containsKey(id);
+  bool isFollowed(String id) => _entries[id]?.followed ?? false;
 
   int get readChapterCount => _read.values.fold(0, (n, s) => n + s.length);
 
@@ -173,8 +189,15 @@ class LibraryStore extends ChangeNotifier {
     _save();
   }
 
-  void remove(String id) {
-    _entries.remove(id);
+  /// 取消追更：移出书架。读过的作品保留阅读位置，下次打开还能接着读。
+  void unfollow(String id) {
+    final e = _entries[id];
+    if (e == null) return;
+    if (e.started) {
+      e.followed = false;
+    } else {
+      _entries.remove(id);
+    }
     _save();
   }
 
@@ -189,7 +212,7 @@ class LibraryStore extends ChangeNotifier {
           author: d.comic.authorText,
           updatedAt: DateTime.now().millisecondsSinceEpoch,
         );
-    _entries[e.id] = e;
+    _entries[e.id] = e..followed = true;
     applyRemote(d, seen: true);
   }
 
@@ -210,7 +233,7 @@ class LibraryStore extends ChangeNotifier {
   /// 批量同步结束后统一保存一次。
   void commit() => _save();
 
-  /// 记录阅读位置；作品不在书架时自动加入。
+  /// 记录阅读位置。第一次读的作品由 [create] 建一条记录（不追更，不进书架）。
   void recordPosition({
     required String id,
     required ShelfEntry Function() create,
@@ -237,6 +260,72 @@ class LibraryStore extends ChangeNotifier {
     _save();
   }
 
+  /// 合并源站书架：都记为追更。本地已有的作品保留阅读位置；新作品排在最近阅读之后，
+  /// 追更信息由下一次书架同步补齐（[applyRemote] 第一次同步不会把它们标成「有更新」）。返回新加入书架的数量。
+  int mergeRemoteShelf(Iterable<ComicBrief> comics) {
+    var added = 0;
+    for (final c in comics) {
+      if (c.pathWord.isEmpty) continue;
+      final e = _entries[c.pathWord];
+      if (e == null) {
+        _entries[c.pathWord] = ShelfEntry(id: c.pathWord, kind: ShelfKind.manga, name: c.name, cover: c.cover, author: c.authorText, updatedAt: 1);
+        added++;
+      } else if (!e.followed) {
+        e.followed = true;
+        added++;
+      }
+    }
+    if (added > 0) _save();
+    return added;
+  }
+
+  /// 合并源站轻小说书架（[Wenku8] 官方站）。都记为已加入书架；本地已有的保留阅读位置。
+  /// 源站给的是章节名而不是章节 id，所以只在本地还没读过时用来定位「读到哪一章」。
+  /// 返回新加入书架的数量。
+  int mergeWenkuShelf(Iterable<({int aid, String name, String author, String bookmark})> items) {
+    var added = 0;
+    for (final i in items) {
+      final id = wenkuIdOf(i.aid);
+      final existing = _entries[id];
+      final e = existing ??
+          ShelfEntry(
+            id: id,
+            kind: ShelfKind.novel,
+            name: i.name,
+            cover: 'https://img.wenku8.com/image/${i.aid ~/ 1000}/${i.aid}/${i.aid}s.jpg',
+            author: i.author,
+            updatedAt: 1,
+          );
+      if (existing == null || !e.followed) added++;
+      e.followed = true;
+      _entries[id] = e;
+      if (!e.started && i.bookmark.isNotEmpty) e.chapterName = i.bookmark;
+    }
+    _save();
+    return added;
+  }
+
+  /// 合并源站浏览历史：只给本地还没读过的作品补上「读到哪一话」，本地记录更精确（有页码），不覆盖。
+  /// 没在书架上的作品只记阅读位置、不追更。返回补上阅读位置的数量。
+  int mergeRemoteHistory(Iterable<({ComicBrief comic, String chapterId, String chapterName})> items) {
+    var filled = 0;
+    for (final h in items) {
+      final c = h.comic;
+      if (c.pathWord.isEmpty) continue;
+      final e = _entries[c.pathWord] ??= ShelfEntry(id: c.pathWord, kind: ShelfKind.manga, name: c.name, cover: c.cover, author: c.authorText, followed: false, updatedAt: 1);
+      if (e.started) continue;
+      e
+        ..chapterUuid = h.chapterId
+        ..chapterName = h.chapterName
+        ..page = 0
+        ..pageCount = 0
+        ..progress = 0;
+      filled++;
+    }
+    if (filled > 0) _save();
+    return filled;
+  }
+
   bool isRead(String id, String chapterUuid) => _read[id]?.contains(chapterUuid) ?? false;
 
   void markRead(String id, String chapterUuid) {
@@ -245,6 +334,7 @@ class LibraryStore extends ChangeNotifier {
 
   /// 清除阅读记录：保留书架上的作品和追更状态，只清掉阅读位置和已读标记。
   void clearHistory() {
+    _entries.removeWhere((_, e) => !e.followed);
     for (final e in _entries.values) {
       e
         ..chapterUuid = null
@@ -272,11 +362,6 @@ class ReaderPrefs extends ChangeNotifier {
     'brightness': 1.0,
     'font': 0,
     'fontSize': 19.0,
-    'line': 1,
-    'weight': 0,
-    'margin': 1,
-    'spacing': 0.0,
-    'ink': 0,
     'mangaScroll': false,
     'mangaRtl': true,
     'mangaSaver': false,
@@ -289,11 +374,15 @@ class ReaderPrefs extends ChangeNotifier {
     'searchHistory': '',
     'lineHeight': 1.85,
     'reduceTransparency': false,
+    'appearance': 0,
   };
 
   final _v = Map<String, Object>.of(defaults);
 
   void _load() {
+    _v
+      ..clear()
+      ..addAll(defaults);
     final raw = _prefs.getString(_k);
     if (raw == null) return;
     (jsonDecode(raw) as Map).forEach((k, v) {
@@ -321,16 +410,6 @@ class ReaderPrefs extends ChangeNotifier {
   set font(int v) => _set('font', v);
   double get fontSize => _get('fontSize');
   set fontSize(double v) => _set('fontSize', v);
-  int get line => _get('line');
-  set line(int v) => _set('line', v);
-  int get weight => _get('weight');
-  set weight(int v) => _set('weight', v);
-  int get margin => _get('margin');
-  set margin(int v) => _set('margin', v);
-  double get spacing => _get('spacing');
-  set spacing(double v) => _set('spacing', v);
-  int get ink => _get('ink');
-  set ink(int v) => _set('ink', v);
   bool get mangaScroll => _get('mangaScroll');
   set mangaScroll(bool v) => _set('mangaScroll', v);
   bool get mangaRtl => _get('mangaRtl');
@@ -367,6 +446,10 @@ class ReaderPrefs extends ChangeNotifier {
   set lineHeight(double v) => _set('lineHeight', v);
 
   /// iOS「减少透明度」：玻璃控件改为实底。
+  /// 外观：0 跟随系统、1 浅色、2 深色。
+  int get appearance => _get('appearance');
+  set appearance(int v) => _set('appearance', v);
+
   bool get reduceTransparency => _get('reduceTransparency');
   set reduceTransparency(bool v) => _set('reduceTransparency', v);
 
@@ -384,10 +467,10 @@ class ReaderPrefs extends ChangeNotifier {
 
   /// 只恢复排版相关项，保留配色、亮度和漫画设置。
   void resetTypography() {
-    for (final k in const ['font', 'fontSize', 'line', 'weight', 'spacing', 'ink', 'lineHeight']) {
+    for (final k in const ['font', 'fontSize']) {
       _v[k] = defaults[k]!;
     }
-    _set('margin', defaults['margin']!);
+    _set('lineHeight', defaults['lineHeight']!);
   }
 }
 

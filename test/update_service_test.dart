@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pastemangax/core/update_service.dart';
-import 'package:pastemangax/pages/update_dialog.dart';
 
 Map<String, dynamic> release({String tag = 'v0.3.0', List<Map<String, dynamic>>? assets, String body = '## 更新\n- 书架排序\n- **省流**画质'}) => {
       'tag_name': tag,

@@ -7,7 +7,7 @@ import '../data/sample_novel.dart';
 import '../ui/icons.dart';
 import 'ios_theme.dart';
 
-/// 纸张：纸白、暖纸、深色。对应共享偏好里的配色下标 0 / 1 / 3（安卓的雾绿在 iOS 上按纸白显示）。
+/// 纸张：纸白、暖纸、深色。对应偏好里的配色下标 0 / 1 / 3（旧版的雾绿按纸白显示）。
 class _Paper {
   const _Paper(this.name, this.index, this.bg, this.ink, this.muted);
 
@@ -69,7 +69,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
   @override
   void dispose() {
     _scroll.dispose();
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
     super.dispose();
   }
 
@@ -126,7 +126,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
         listenable: _p,
         builder: (context, _) {
           final paper = _Paper.of(_p.theme);
-          SystemChrome.setSystemUIOverlayStyle((paper.dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark).copyWith(statusBarColor: Colors.transparent));
+          SystemChrome.setSystemUIOverlayStyle(paper.dark ? kDarkChrome : kLightChrome);
           final ch = SampleNovel.chapters[_chapter];
           final style = _bodyStyle(_p, paper);
           final top = MediaQuery.paddingOf(context).top;
@@ -159,7 +159,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
                           for (final para in ch.paragraphs)
                             Padding(
                               padding: EdgeInsets.only(bottom: style.fontSize! * .9),
-                              child: Text('　　$para', style: style, textAlign: TextAlign.justify),
+                              child: novelParagraph(para, style),
                             ),
                           const SizedBox(height: 18),
                           if (_chapter < SampleNovel.chapters.length - 1)
@@ -200,7 +200,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
                         Text('$page  /  $pages', style: TextStyle(fontSize: 15, color: paper.ink, fontFeatures: const [FontFeature.tabularFigures()])),
                         Expanded(
                           child: _barButton('settings', '阅读设置', paper, () {
-                            showModalBottomSheet<void>(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (_) => const _AppearanceSheet());
+                            showNovelAppearance(context);
                           }),
                         ),
                       ]),
@@ -225,6 +225,33 @@ class _IosNovelPageState extends State<IosNovelPage> {
         ),
       );
 }
+
+/// 正文段落：首行缩进两字。缩进用占位块而不是全角空格——两端对齐时
+/// Flutter 会把行首空白也拿去分配，多行段落的缩进就没了。
+Widget novelParagraph(String para, TextStyle style) => Text.rich(
+      TextSpan(children: [
+        WidgetSpan(child: SizedBox(width: (style.fontSize ?? 18) * 2)),
+        TextSpan(text: para),
+      ]),
+      style: style,
+      textAlign: TextAlign.justify,
+    );
+
+/// 纸张名称，「阅读设置」里显示当前值用。
+String novelPaperName(int theme) => _Paper.of(theme).name;
+
+/// 纸张配色。真实轻小说页（[IosWenkuNovelPage]）复用同一套，保证两处一致。
+({Color bg, Color ink, Color muted, bool dark}) novelPaperColors(int theme) {
+  final paper = _Paper.of(theme);
+  return (bg: paper.bg, ink: paper.ink, muted: paper.muted, dark: paper.dark);
+}
+
+/// 正文排版：字号、行距、字色都取自「阅读设置」。
+TextStyle novelBodyStyle(ReaderPrefs prefs) => _bodyStyle(prefs, _Paper.of(prefs.theme));
+
+/// 打开阅读外观面板：小说页和「阅读设置 → 纸张与排版」共用。
+Future<void> showNovelAppearance(BuildContext context) =>
+    showModalBottomSheet<void>(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (_) => const _AppearanceSheet());
 
 /// 阅读外观（一级）→ 字体与排版（二级），同一个面板内切换。
 class _AppearanceSheet extends StatefulWidget {
@@ -260,7 +287,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
 
   Widget _header(String title, {bool back = false}) => Row(children: [
         if (back) ...[GlassButton(icon: 'chevronLeft', label: '返回阅读外观', onTap: () => setState(() => _typography = false)), const SizedBox(width: 10)],
-        Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: IosColors.ink)),
+        Text(title, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: IosColors.ink)),
         const Spacer(),
         TextAction(label: '完成', onTap: () => Navigator.pop(context)),
       ]);
@@ -275,7 +302,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
     final fontName = _p.font == 1 ? '黑体' : '宋体';
     return Column(key: const ValueKey('appearance'), mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       _header('阅读外观'),
-      const Padding(padding: EdgeInsets.fromLTRB(4, 14, 4, 8), child: Text('纸张', style: TextStyle(fontSize: 13, color: IosColors.muted))),
+      Padding(padding: EdgeInsets.fromLTRB(4, 14, 4, 8), child: Text('纸张', style: TextStyle(fontSize: 13, color: IosColors.muted))),
       Row(children: [
         for (final paper in _Paper.all) ...[
           if (paper != _Paper.all.first) const SizedBox(width: 10),
@@ -300,7 +327,7 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
                       Text(paper.name, style: TextStyle(fontSize: 12, color: paper.muted)),
                     ]),
                   ),
-                  if (_Paper.of(_p.theme) == paper) const Positioned(top: 8, right: 8, child: AppIcon('check', size: 14, color: IosColors.accent, stroke: 2.4)),
+                  if (_Paper.of(_p.theme) == paper) Positioned(top: 8, right: 8, child: AppIcon('check', size: 14, color: IosColors.accent, stroke: 2.4)),
                 ]),
               ),
             ),
@@ -314,16 +341,16 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
           child: Row(children: [
-            const AppIcon('type', size: 22, color: IosColors.ink),
+            AppIcon('type', size: 22, color: IosColors.ink),
             const SizedBox(width: 14),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('字体与排版', style: TextStyle(fontSize: 17, color: IosColors.ink)),
+                Text('字体与排版', style: TextStyle(fontSize: 17, color: IosColors.ink)),
                 const SizedBox(height: 2),
-                Text('$fontName · ${_p.fontSize.round()} 磅', style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+                Text('$fontName · ${_p.fontSize.round()} 磅', style: TextStyle(fontSize: 13, color: IosColors.muted)),
               ]),
             ),
-            const AppIcon('right', size: 14, color: IosColors.muted, stroke: 2),
+            AppIcon('right', size: 14, color: IosColors.muted, stroke: 2),
           ]),
         ),
       ),
@@ -332,18 +359,12 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
         Padding(
           padding: const EdgeInsets.only(top: 10),
           child: Row(children: [
-            const Text('页面亮度', style: TextStyle(fontSize: 15, color: IosColors.ink)),
+            Text('页面亮度', style: TextStyle(fontSize: 15, color: IosColors.ink)),
             const Spacer(),
-            Text('${(_p.brightness * 100).round()}%', style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text('${(_p.brightness * 100).round()}%', style: TextStyle(fontSize: 15, color: IosColors.muted)),
           ]),
         ),
         SizedBox(width: double.infinity, child: CupertinoSlider(value: _p.brightness, min: .3, max: 1, activeColor: IosColors.accent, onChanged: (v) => _p.brightness = v)),
-      ]),
-      const SizedBox(height: 10),
-      Row(children: [
-        const Padding(padding: EdgeInsets.only(left: 4), child: Text('减少透明度', style: TextStyle(fontSize: 17, color: IosColors.ink))),
-        const Spacer(),
-        CupertinoSwitch(value: _p.reduceTransparency, activeTrackColor: IosColors.accent, onChanged: GlassScope.set),
       ]),
     ]);
   }
@@ -355,29 +376,29 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
       const SizedBox(height: 14),
       Container(
         padding: const EdgeInsets.only(left: 14),
-        decoration: const BoxDecoration(border: Border(left: BorderSide(color: IosColors.line, width: 2))),
+        decoration: BoxDecoration(border: Border(left: BorderSide(color: IosColors.line, width: 2))),
         child: Text('风穿过候车室，\n把时刻表的一角轻轻掀起。', style: _bodyStyle(_p, paper).copyWith(color: IosColors.ink, fontSize: _p.fontSize.clamp(16, 22))),
       ),
-      const Padding(padding: EdgeInsets.fromLTRB(4, 18, 4, 8), child: Text('阅读字体', style: TextStyle(fontSize: 13, color: IosColors.muted))),
+      Padding(padding: EdgeInsets.fromLTRB(4, 18, 4, 8), child: Text('阅读字体', style: TextStyle(fontSize: 13, color: IosColors.muted))),
       IosSegmented(options: const ['宋体', '黑体'], selected: _p.font == 1 ? 1 : 0, onChanged: (i) => _p.font = i),
       const SizedBox(height: 14),
       _card([
         Padding(
           padding: const EdgeInsets.only(top: 10),
           child: Row(children: [
-            const Text('文字大小', style: TextStyle(fontSize: 15, color: IosColors.ink)),
+            Text('文字大小', style: TextStyle(fontSize: 15, color: IosColors.ink)),
             const Spacer(),
-            Text('${_p.fontSize.round()} 磅', style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text('${_p.fontSize.round()} 磅', style: TextStyle(fontSize: 15, color: IosColors.muted)),
           ]),
         ),
         SizedBox(width: double.infinity, child: CupertinoSlider(value: _p.fontSize, min: 16, max: 26, divisions: 10, activeColor: IosColors.accent, onChanged: (v) => _p.fontSize = v)),
-        const Divider(height: 1, thickness: .5, color: IosColors.line),
+        Divider(height: 1, thickness: .5, color: IosColors.line),
         Padding(
           padding: const EdgeInsets.only(top: 10),
           child: Row(children: [
-            const Text('行间距', style: TextStyle(fontSize: 15, color: IosColors.ink)),
+            Text('行间距', style: TextStyle(fontSize: 15, color: IosColors.ink)),
             const Spacer(),
-            Text(_p.lineHeight.toStringAsFixed(2), style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text(_p.lineHeight.toStringAsFixed(2), style: TextStyle(fontSize: 15, color: IosColors.muted)),
           ]),
         ),
         SizedBox(width: double.infinity, child: CupertinoSlider(value: _p.lineHeight, min: 1.4, max: 2.2, divisions: 16, activeColor: IosColors.accent, onChanged: (v) => _p.lineHeight = v)),

@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/account.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
-import '../pages/update_dialog.dart' show plainNotes;
+import '../ui/format.dart' show formatBytes;
 import '../ui/icons.dart';
-import '../ui/theme.dart' show formatBytes;
 import 'ios_detail.dart';
 import 'ios_discover.dart';
 import 'ios_mine.dart';
@@ -16,30 +16,73 @@ import 'ios_novel.dart';
 import 'ios_reader.dart';
 import 'ios_search.dart';
 import 'ios_shelf.dart';
+import '../core/wenku_web.dart';
 import 'ios_theme.dart';
+import 'ios_wenku_novel.dart';
 
-class IosApp extends StatelessWidget {
+class IosApp extends StatefulWidget {
   const IosApp({super.key});
 
   @override
+  State<IosApp> createState() => _IosAppState();
+}
+
+/// 根据「外观设置」和系统外观决定深浅色；切换时整棵树重建，当前页面和导航栈都保留。
+class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
+  final _prefs = ReaderPrefs.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _prefs.addListener(_apply);
+    GlassScope.reduce.value = _prefs.reduceTransparency;
+    IosColors.isDark = _wantDark;
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _prefs.removeListener(_apply);
+    super.dispose();
+  }
+
+  bool get _wantDark => switch (_prefs.appearance) {
+        1 => false,
+        2 => true,
+        _ => WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark,
+      };
+
+  @override
+  void didChangePlatformBrightness() => _apply();
+
+  void _apply() {
+    final dark = _wantDark;
+    if (dark == IosColors.isDark || !mounted) return;
+    IosColors.isDark = dark;
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
+    // 颜色是静态取值，没有依赖关系可通知，所以把所有元素都标脏重建一次。
+    void rebuild(Element e) {
+      e.markNeedsBuild();
+      e.visitChildren(rebuild);
+    }
+
+    setState(() {});
+    (context as Element).visitChildren(rebuild);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    GlassScope.reduce.value = ReaderPrefs.instance.reduceTransparency;
     return MaterialApp(
       title: '栞间',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        platform: TargetPlatform.iOS,
-        scaffoldBackgroundColor: IosColors.bg,
-        colorScheme: ColorScheme.fromSeed(seedColor: IosColors.accent, primary: IosColors.accent, surface: IosColors.bg),
-        splashFactory: NoSplash.splashFactory,
-        highlightColor: Colors.transparent,
-        cupertinoOverrideTheme: const CupertinoThemeData(primaryColor: IosColors.accent),
-        pageTransitionsTheme: const PageTransitionsTheme(builders: {
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-        }),
+      theme: buildAppTheme(),
+      // 根部挂一个 1×1 的隐藏 WebView：轻小说源站拦下 HTTP 客户端时用它取页面。
+      builder: (context, child) => GlassScope(
+        reduce: GlassScope.reduce,
+        child: Stack(children: [child!, Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host())]),
       ),
-      builder: (context, child) => GlassScope(reduce: GlassScope.reduce, child: child!),
       home: const IosShell(),
     );
   }
@@ -61,8 +104,10 @@ class _IosShellState extends State<IosShell> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
     if (IosShell.autoUpdateCheck) Future.delayed(const Duration(seconds: 3), _autoCheck);
+    // 已登录账号时，打开应用稍后同步一次源站书架和历史（30 分钟内同步过就跳过）。
+    if (AccountService.autoSync && AccountService.instance.loggedIn) Future.delayed(const Duration(seconds: 2), AccountService.instance.autoSyncIfDue);
   }
 
   Future<void> _autoCheck() async {
@@ -73,29 +118,36 @@ class _IosShellState extends State<IosShell> {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
         valueListenable: IosShell.tab,
-        builder: (context, index, _) => Scaffold(
-          body: Stack(children: [
-            Positioned.fill(child: IndexedStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()])),
-            // 底部渐隐，让悬浮标签栏下的内容不抢视线。
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 120,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .88)],
+        // Android 返回键：在发现 / 我的上先回到书架，再退出应用。
+        builder: (context, index, _) => PopScope(
+          canPop: index == 0,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) IosShell.tab.value = 0;
+          },
+          child: Scaffold(
+            body: Stack(children: [
+              Positioned.fill(child: IndexedStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()])),
+              // 底部渐隐，让悬浮标签栏下的内容不抢视线。
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 120,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .88)],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            _TabDock(index: index),
-          ]),
+              _TabDock(index: index),
+            ]),
+          ),
         ),
       );
 }
@@ -154,7 +206,7 @@ class _TabDock extends StatelessWidget {
                                       child: Container(
                                         width: 8,
                                         height: 8,
-                                        decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 1.5)),
+                                        decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle, border: Border.all(color: IosColors.surface, width: 1.5)),
                                       ),
                                     ),
                                 ]),
@@ -174,7 +226,7 @@ class _TabDock extends StatelessWidget {
             Pressable(
               semanticLabel: '搜索',
               onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosSearchPage())),
-              child: const Glass(
+              child: Glass(
                 radius: 32,
                 child: SizedBox.square(dimension: 64, child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8))),
               ),
@@ -200,9 +252,16 @@ Future<void> iosOpenReader(BuildContext context, {required ComicBrief comic, req
 
 Future<void> iosOpenNovel(BuildContext context) => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => const IosNovelPage()));
 
+/// 源站的轻小说（书架 id 是 `wenku-<aid>`）。内置示例小说仍走 [iosOpenNovel]。
+Future<void> iosOpenWenkuNovel(BuildContext context, {required int aid, String name = ''}) =>
+    Navigator.of(context).push(CupertinoPageRoute(builder: (_) => IosWenkuNovelPage(aid: aid, name: name)));
+
 /// 继续阅读：小说进阅读器，漫画有进度进阅读器，否则进详情。
 Future<void> iosContinue(BuildContext context, ShelfEntry e) {
-  if (e.kind == ShelfKind.novel) return iosOpenNovel(context);
+  if (e.kind == ShelfKind.novel) {
+    final aid = wenkuAidOf(e.id);
+    return aid == null ? iosOpenNovel(context) : iosOpenWenkuNovel(context, aid: aid, name: e.name);
+  }
   if (e.chapterUuid == null) return iosOpenDetail(context, briefOfEntry(e));
   return iosOpenReader(context, comic: briefOfEntry(e), group: e.group ?? 'default', chapterUuid: e.chapterUuid!, initialPage: e.page);
 }

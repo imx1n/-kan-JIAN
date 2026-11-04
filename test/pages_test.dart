@@ -1,33 +1,49 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:pastemangax/core/account.dart';
 import 'package:pastemangax/core/shelf_sync.dart';
 import 'package:pastemangax/core/store.dart';
 import 'package:pastemangax/core/update_service.dart';
-import 'package:pastemangax/pages/home_shell.dart';
-import 'package:pastemangax/pages/mine_page.dart';
-import 'package:pastemangax/pages/shelf_page.dart';
-import 'package:pastemangax/pages/update_dialog.dart';
-import 'package:pastemangax/ui/theme.dart';
-import 'package:pastemangax/ui/widgets.dart';
+import 'package:pastemangax/ios/ios_account.dart';
+import 'package:pastemangax/ios/ios_app.dart';
+import 'package:pastemangax/ios/ios_mine.dart';
+import 'package:pastemangax/ios/ios_novel.dart';
+import 'package:pastemangax/ios/ios_shelf.dart';
+import 'package:pastemangax/ios/ios_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 不依赖网络的页面：按 390×844 手机尺寸渲染，检查布局溢出与关键交互。
+/// 两端用同一套界面，每个用例在 iOS 和 Android 上各跑一遍。
+void uiTest(String name, WidgetTesterCallback body) =>
+    testWidgets(name, body, variant: const TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android}));
+
+/// 界面：按 393×852 手机尺寸渲染，检查布局溢出与关键交互。
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    PackageInfo.setMockInitialValues(appName: '栞间', packageName: 'com.pastemangax.reader', version: '0.2.0', buildNumber: '2', buildSignature: '');
+    PackageInfo.setMockInitialValues(appName: '栞间', packageName: 'com.pastemangax.reader', version: '0.3.0', buildNumber: '3', buildSignature: '');
     await initStores();
+    await AccountService.instance.load();
+    AccountService.autoSync = false;
     ShelfSync.enabled = false;
-    HomeShell.autoUpdateCheck = false;
-    HomeShell.tab.value = 0;
+    IosShell.autoUpdateCheck = false;
+    IosShell.tab.value = 0;
+    GlassScope.reduce.value = false;
+    IosColors.isDark = false;
   });
 
   Future<void> pump(WidgetTester tester, Widget child) async {
-    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.physicalSize = const Size(1179, 2556);
     tester.view.devicePixelRatio = 3;
+    tester.view.padding = const FakeViewPadding(top: 177, bottom: 102);
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(MaterialApp(theme: buildTheme(), home: Scaffold(body: child)));
+    await tester.pumpWidget(MaterialApp(
+      theme: buildAppTheme(),
+      builder: (context, c) => GlassScope(reduce: GlassScope.reduce, child: c!),
+      home: Scaffold(body: child),
+    ));
     await tester.pump(const Duration(milliseconds: 100));
   }
 
@@ -43,96 +59,196 @@ void main() {
         latestCount: latest,
         seenCount: seen,
         chapterUuid: started ? 'u$id' : null,
-        chapterName: started ? '第3话' : null,
+        chapterName: started ? '第245话' : null,
         page: 2,
         pageCount: 16,
         progress: started ? .19 : 0,
       );
 
-  testWidgets('标签和角标宽度跟随文字，不会在 Wrap 里撑满整行', (tester) async {
-    await pump(tester, const Wrap(children: [Pill('連載中'), NewBadge('新 2 话')]));
-    expect(tester.getSize(find.byType(Pill)).width, lessThan(120));
-    expect(tester.getSize(find.byType(NewBadge)).width, lessThan(120));
-  });
-
-  testWidgets('书架：空的时候显示首次使用说明', (tester) async {
-    await pump(tester, const ShelfPage());
-    expect(find.text('书架还空着'), findsOneWidget);
-    expect(find.text('去发现'), findsOneWidget);
+  uiTest('书架：首次使用', (tester) async {
+    await pump(tester, const IosShelfPage());
+    expect(find.text('好故事，从第一本开始'), findsOneWidget);
     await tester.tap(find.text('去发现'));
-    expect(HomeShell.tab.value, 1);
+    expect(IosShell.tab.value, 1);
   });
 
-  testWidgets('书架：继续阅读、有更新、筛选', (tester) async {
+  uiTest('书架：最近在读、有更新、筛选', (tester) async {
     final store = LibraryStore.instance;
     store.put(manga('a', started: true));
     store.put(manga('b', latest: 12, seen: 10));
     store.put(manga('c', status: '已完結'));
-    await pump(tester, const ShelfPage());
+    await pump(tester, const IosShelfPage());
 
-    expect(find.text('继续阅读'), findsOneWidget);
-    expect(find.text('第3话 · 第 3 / 16 页'), findsOneWidget);
+    expect(find.text('最近在读'), findsOneWidget);
+    expect(find.text('第245话  第 3 / 16 页'), findsOneWidget);
     expect(find.text('新 2 话'), findsOneWidget);
-
-    // 没有封面时占位封面上也会显示书名，所以同一部作品可能匹配到两处。
-    await tester.tap(find.text('有更新').first);
-    await tester.pump();
-    expect(find.text('作品b'), findsWidgets);
-    expect(find.text('作品c'), findsNothing);
+    expect(find.text('我的藏书'), findsOneWidget);
 
     await tester.tap(find.text('已完结'));
     await tester.pump();
     expect(find.text('作品c'), findsWidgets);
     expect(find.text('作品b'), findsNothing);
-
-    // 筛选胶囊一行放不下，轻小说要先横向滚出来。
-    await tester.ensureVisible(find.text('轻小说'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('轻小说'));
-    await tester.pump();
-    expect(find.text('打开示例《雨停之前》'), findsOneWidget);
   });
 
-  testWidgets('我的：版本号、阅读默认值', (tester) async {
-    await pump(tester, const MinePage());
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(find.textContaining('当前 v0.2.0'), findsOneWidget);
-
-    await tester.tap(find.text('省流'));
-    await tester.pump();
-    expect(ReaderPrefs.instance.mangaSaver, isTrue);
-
-    await tester.tap(find.text('从左向右'));
-    await tester.pump();
-    expect(ReaderPrefs.instance.mangaRtl, isFalse);
-
-    await tester.scrollUntilVisible(find.text('项目主页'), 200);
-    expect(find.textContaining('github.com/luminacry/-kan-JIAN'), findsOneWidget);
+  uiTest('标签栏：三个标签 + 搜索', (tester) async {
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const IosApp());
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('书架'), findsWidgets);
+    expect(find.bySemanticsLabel('搜索'), findsWidgets);
+    await tester.tap(find.text('我的').last);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(IosShell.tab.value, 2);
   });
 
-  testWidgets('更新弹窗：内容与「跳过此版本」', (tester) async {
+  uiTest('返回键：在发现 / 我的上先回到书架', (tester) async {
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const IosApp());
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('发现').last);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(IosShell.tab.value, 1);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(IosShell.tab.value, 0);
+  });
+
+  uiTest('更新弹窗：本平台的安装包、更新内容、跳过此版本', (tester) async {
+    final ios = defaultTargetPlatform == TargetPlatform.iOS;
     final r = UpdateService.resolve(200, {
-      'tag_name': 'v0.3.0',
-      'name': 'v0.3.0',
-      'body': '- 书架可以按更新时间排序\n- 阅读器新增省流画质',
-      'html_url': 'https://github.com/luminacry/-kan-JIAN/releases/tag/v0.3.0',
+      'tag_name': 'v0.4.0',
+      'name': 'v0.4.0',
+      'body': '## 新增\n- 两端界面统一\n- **省流**画质',
+      'html_url': 'https://github.com/luminacry/-kan-JIAN/releases/tag/v0.4.0',
       'published_at': '2026-11-05T08:00:00Z',
       'assets': [
-        {'name': 'kanjian-0.3.0.apk', 'size': 19293798, 'browser_download_url': 'https://example.com/a.apk'},
+        {'name': 'kanjian-v0.4.0.apk', 'size': 19293798, 'browser_download_url': 'https://example.com/a.apk'},
+        {'name': 'kanjian-v0.4.0-unsigned.ipa', 'size': 7757782, 'browser_download_url': 'https://example.com/a.ipa'},
       ],
-    }, '0.2.0');
-    await pump(tester, Builder(builder: (context) => TextButton(onPressed: () => showUpdateDialog(context, r), child: const Text('open'))));
+    }, '0.3.0', ext: ios ? '.ipa' : '.apk', requirePackage: ios);
+    expect(r.release!.packageUrl, ios ? 'https://example.com/a.ipa' : 'https://example.com/a.apk');
+
+    await pump(tester, Builder(builder: (context) => CupertinoButton(onPressed: () => showIosUpdateDialog(context, r), child: const Text('open'))));
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
-
-    expect(find.text('发现新版本 v0.3.0'), findsOneWidget);
-    expect(find.textContaining('安装包 18.4 MB'), findsOneWidget);
-    expect(find.textContaining('• 阅读器新增省流画质'), findsOneWidget);
-    expect(find.text('下载'), findsOneWidget);
+    expect(find.text('发现新版本 v0.4.0'), findsOneWidget);
+    expect(find.textContaining(ios ? '安装包 7.4 MB' : '安装包 18.4 MB'), findsOneWidget);
+    expect(find.textContaining('• 省流画质'), findsOneWidget);
 
     await tester.tap(find.text('跳过此版本'));
     await tester.pumpAndSettle();
-    expect(ReaderPrefs.instance.skipVersion, '0.3.0');
-    expect(find.text('发现新版本 v0.3.0'), findsNothing);
+    expect(ReaderPrefs.instance.skipVersion, '0.4.0');
+    expect(find.text('发现新版本 v0.4.0'), findsNothing);
+  });
+
+  uiTest('我的：外观、阅读两个设置入口，版本号', (tester) async {
+    await pump(tester, const IosMinePage());
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.text('外观设置'), findsOneWidget);
+    expect(find.text('阅读设置'), findsOneWidget);
+    expect(find.text('漫画翻页方向'), findsNothing);
+    expect(find.text('跟随系统'), findsOneWidget);
+    await tester.scrollUntilVisible(find.textContaining('当前 v0.3.0'), 200);
+    expect(find.textContaining('当前 v0.3.0'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('阅读设置'), -200);
+    await tester.tap(find.text('阅读设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('翻页方向'), findsOneWidget);
+    expect(find.text('纸白 · 19 磅'), findsOneWidget);
+    await tester.tap(find.text('阅读方式'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('条漫').last);
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.mangaScroll, isTrue);
+  });
+
+  uiTest('账号同步：未登录显示登录表单，填好账号密码才能登录', (tester) async {
+    await pump(tester, const IosAccountPage());
+    expect(find.text('拷贝漫画账号'), findsOneWidget);
+    expect(find.text('登录并同步'), findsOneWidget);
+    expect(find.textContaining('不保存在本机'), findsOneWidget);
+    final fields = find.byType(CupertinoTextField);
+    expect(fields, findsNWidgets(2));
+    expect(tester.widget<CupertinoTextField>(fields.last).obscureText, isTrue);
+
+    // 没填密码时按钮不可用。
+    await tester.enterText(fields.first, 'reader');
+    await tester.pump();
+    await tester.tap(find.text('登录并同步'));
+    await tester.pump();
+    expect(AccountService.instance.busy, isFalse);
+    expect(AccountService.instance.loggedIn, isFalse);
+  });
+
+  uiTest('外观设置：深色模式整体切换，减少透明度', (tester) async {
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const IosApp());
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('我的').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('外观设置'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(CupertinoSwitch));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.reduceTransparency, isTrue);
+    expect(GlassScope.reduce.value, isTrue);
+
+    await tester.tap(find.text('深色模式'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('深色').last);
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.appearance, 2);
+    expect(IosColors.isDark, isTrue);
+    // 切换后当前页面还在，背景已经换成深色。
+    expect(find.text('跟随系统'), findsOneWidget);
+    expect(tester.widget<Scaffold>(find.byType(Scaffold).last).backgroundColor, IosColors.dBg);
+
+    await tester.tap(find.text('浅色'));
+    await tester.pumpAndSettle();
+    expect(IosColors.isDark, isFalse);
+  });
+
+  uiTest('小说：阅读外观 → 字体与排版', (tester) async {
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildAppTheme(),
+      builder: (context, c) => GlassScope(reduce: GlassScope.reduce, child: c!),
+      home: const IosNovelPage(),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('雨停之前'), findsWidgets);
+    expect(find.text('1  /  1'), findsNothing);
+
+    await tester.tap(find.text('阅读设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('阅读外观'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('暖纸'));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.theme, 1);
+
+    expect(find.byType(CupertinoSwitch), findsNothing);
+
+    await tester.tap(find.text('字体与排版'));
+    await tester.pumpAndSettle();
+    expect(find.text('阅读字体'), findsOneWidget);
+    await tester.tap(find.text('黑体'));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.font, 1);
+    await tester.tap(find.text('恢复默认排版'));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.font, 0);
+    expect(ReaderPrefs.instance.lineHeight, 1.85);
   });
 }

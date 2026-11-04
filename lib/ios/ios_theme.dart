@@ -7,19 +7,26 @@ import 'package:flutter/services.dart';
 import '../core/store.dart';
 import '../ui/icons.dart';
 
-/// iOS 26 设计稿的色板：近白实底承载内容，暖棕为唯一强调色；阅读器为深色。
+/// iOS 26 设计稿的色板：近白实底承载内容，暖棕为唯一强调色；深色模式按设计稿的 dark 变量。
+/// 阅读器始终是深色，直接用下面 d 开头的常量。
 class IosColors {
   IosColors._();
 
-  static const bg = Color(0xFFF9F9FB);
-  static const surface = Color(0xFFFFFFFF);
-  static const ink = Color(0xFF222328);
-  static const muted = Color(0xFF62636B);
-  static const faint = Color(0xFFE9E9EE);
-  static const line = Color(0xFFE2E2E8);
-  static const accent = Color(0xFF914638);
-  static const accentSoft = Color(0xFFF3E9E5);
-  static const tab = Color(0xFF5C5D65);
+  /// 当前是否深色模式，由 [IosApp] 根据「外观设置」和系统外观决定。
+  static bool isDark = false;
+
+  static Color get bg => isDark ? dBg : const Color(0xFFF9F9FB);
+  static Color get surface => isDark ? dSurface : const Color(0xFFFFFFFF);
+  static Color get ink => isDark ? dInk : const Color(0xFF222328);
+  static Color get muted => isDark ? dMuted : const Color(0xFF62636B);
+  static Color get faint => isDark ? dFaint : const Color(0xFFE9E9EE);
+  static Color get line => isDark ? dLine : const Color(0xFFE2E2E8);
+  static Color get accent => isDark ? dAccent : const Color(0xFF914638);
+  static Color get accentSoft => isDark ? const Color(0xFF45312D) : const Color(0xFFF3E9E5);
+  static Color get tab => isDark ? dMuted : const Color(0xFF5C5D65);
+
+  /// 实心强调按钮上的文字：浅色模式白字，深色模式（浅色按钮）深字。
+  static Color get onAccent => isDark ? const Color(0xFF291C18) : const Color(0xFFFFFFFF);
 
   static const dBg = Color(0xFF15161A);
   static const dSurface = Color(0xFF25262C);
@@ -30,8 +37,53 @@ class IosColors {
   static const dAccent = Color(0xFFF1B4A4);
 }
 
-/// 小说正文用系统宋体（iOS 自带 Songti SC），其他平台回退到 serif。
+/// 系统栏：状态栏和 Android 导航栏都透明，内容画到后面。浅色页面用深色图标。
+const kLightChrome = SystemUiOverlayStyle(
+  statusBarColor: Colors.transparent,
+  statusBarIconBrightness: Brightness.dark,
+  statusBarBrightness: Brightness.light,
+  systemNavigationBarColor: Colors.transparent,
+  systemNavigationBarDividerColor: Colors.transparent,
+  systemNavigationBarIconBrightness: Brightness.dark,
+  systemNavigationBarContrastEnforced: false,
+);
+
+/// 普通页面的系统栏：跟随深色模式。
+SystemUiOverlayStyle get pageChrome => IosColors.isDark ? kDarkChrome : kLightChrome;
+
+/// 深色页面（漫画阅读器、深色纸张）用浅色图标。
+const kDarkChrome = SystemUiOverlayStyle(
+  statusBarColor: Colors.transparent,
+  statusBarIconBrightness: Brightness.light,
+  statusBarBrightness: Brightness.dark,
+  systemNavigationBarColor: Colors.transparent,
+  systemNavigationBarDividerColor: Colors.transparent,
+  systemNavigationBarIconBrightness: Brightness.light,
+  systemNavigationBarContrastEnforced: false,
+);
+
+/// 小说正文用系统宋体（iOS 自带 Songti SC），Android 回退到 serif（Noto Serif CJK）。
 const kIosSerif = TextStyle(fontFamily: 'Songti SC', fontFamilyFallback: ['STSong', 'serif']);
+
+/// 应用主题。两端都按 iOS 平台处理：回弹滚动、右滑返回、Cupertino 控件。
+ThemeData buildAppTheme() => ThemeData(
+      platform: TargetPlatform.iOS,
+      brightness: IosColors.isDark ? Brightness.dark : Brightness.light,
+      scaffoldBackgroundColor: IosColors.bg,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: IosColors.accent,
+        brightness: IosColors.isDark ? Brightness.dark : Brightness.light,
+        primary: IosColors.accent,
+        surface: IosColors.bg,
+      ),
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      cupertinoOverrideTheme: CupertinoThemeData(primaryColor: IosColors.accent, brightness: IosColors.isDark ? Brightness.dark : Brightness.light),
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+      }),
+    );
 
 /// 「减少透明度」：开启后玻璃控件改为实底。设置变化时依赖它的控件会重建。
 class GlassScope extends InheritedNotifier<ValueNotifier<bool>> {
@@ -64,8 +116,9 @@ class Glass extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduce = GlassScope.reduced(context);
     final r = BorderRadius.circular(radius);
+    final dark = this.dark || IosColors.isDark;
     final fill = dark
-        ? (reduce ? IosColors.dSurface : const Color(0xB3292A31))
+        ? (reduce ? IosColors.dSurface : const Color(0xAD292A31))
         : (reduce ? const Color(0xFFF2F2F6) : const Color(0xB0F8F8FB));
     Widget body = Container(
       padding: padding,
@@ -89,13 +142,16 @@ class Glass extends StatelessWidget {
 
 /// 按下时轻微缩放、变淡，替代 Material 水波纹。
 class Pressable extends StatefulWidget {
-  const Pressable({super.key, required this.child, required this.onTap, this.onLongPress, this.haptic = false, this.semanticLabel});
+  const Pressable({super.key, required this.child, required this.onTap, this.onLongPress, this.haptic = false, this.semanticLabel, this.dimWhenDisabled = true});
 
   final Widget child;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final bool haptic;
   final String? semanticLabel;
+
+  /// 没有 [onTap] 时是否变淡表示不可用。
+  final bool dimWhenDisabled;
 
   @override
   State<Pressable> createState() => _PressableState();
@@ -129,7 +185,7 @@ class _PressableState extends State<Pressable> {
           child: AnimatedScale(
             scale: _down ? .97 : 1,
             duration: const Duration(milliseconds: 100),
-            child: AnimatedOpacity(opacity: _down ? .7 : (widget.onTap == null ? .4 : 1), duration: const Duration(milliseconds: 100), child: widget.child),
+            child: AnimatedOpacity(opacity: _down ? .7 : (widget.onTap == null && widget.dimWhenDisabled ? .4 : 1), duration: const Duration(milliseconds: 100), child: widget.child),
           ),
         ),
       );
@@ -178,7 +234,7 @@ class LargeTitle extends StatelessWidget {
             Expanded(
               child: Semantics(
                 header: true,
-                child: Text(title, style: const TextStyle(fontSize: 34, height: 1.15, fontWeight: FontWeight.w700, letterSpacing: -.4, color: IosColors.ink)),
+                child: Text(title, style: TextStyle(fontSize: 34, height: 1.15, fontWeight: FontWeight.w700, letterSpacing: -.4, color: IosColors.ink)),
               ),
             ),
             for (final t in trailing) ...[const SizedBox(width: 8), t],
@@ -233,6 +289,69 @@ class IosSegmented extends StatelessWidget {
       );
 }
 
+/// 文字页签 + 选中项下方的短下划线，底部一条细分隔线。用于搜索范围和目录分组。
+class UnderlineTabs extends StatelessWidget {
+  const UnderlineTabs({super.key, required this.options, required this.selected, required this.onChanged, this.counts, this.padding = const EdgeInsets.symmetric(horizontal: 20)});
+
+  final List<String> options;
+  final int selected;
+  final ValueChanged<int> onChanged;
+  final List<int?>? counts;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: padding,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: IosColors.line, width: .5))),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [
+              for (var i = 0; i < options.length; i++)
+                Pressable(
+                  onTap: () {
+                    if (i == selected) return;
+                    HapticFeedback.selectionClick();
+                    onChanged(i);
+                  },
+                  child: Padding(
+                    padding: EdgeInsets.only(left: i == 0 ? 0 : 14, right: 14),
+                    child: SizedBox(
+                      height: 48,
+                      child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+                        Text.rich(
+                          TextSpan(children: [
+                            TextSpan(text: options[i]),
+                            if (counts != null && counts![i] != null)
+                              TextSpan(text: '  ${counts![i]}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: IosColors.muted)),
+                          ]),
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: i == selected ? FontWeight.w700 : FontWeight.w400,
+                            color: i == selected ? IosColors.ink : IosColors.muted,
+                          ),
+                        ),
+                        Positioned(
+                          left: 0,
+                          bottom: 0,
+                          child: AnimatedOpacity(
+                            duration: const Duration(milliseconds: 160),
+                            opacity: i == selected ? 1 : 0,
+                            child: Container(width: 22, height: 3, decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(2))),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                ),
+            ]),
+          ),
+        ),
+      );
+}
+
 /// 横向文字筛选：选中项为浅灰胶囊。
 class TextChips extends StatelessWidget {
   const TextChips({super.key, required this.items, required this.selected, required this.onSelect});
@@ -264,7 +383,7 @@ class TextChips extends StatelessWidget {
                   widthFactor: 1,
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     if (dot) ...[
-                      Container(width: 6, height: 6, decoration: const BoxDecoration(color: IosColors.accent, shape: BoxShape.circle)),
+                      Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle)),
                       const SizedBox(width: 6),
                     ],
                     Text(label, style: TextStyle(fontSize: 15, color: on ? IosColors.ink : IosColors.muted, fontWeight: on ? FontWeight.w600 : FontWeight.w400)),
@@ -296,20 +415,20 @@ class IosSection extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 26, 16, 10),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          Text(title, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
+          Text(title, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
           if (count != null) ...[
             const SizedBox(width: 8),
-            Text(count!, style: const TextStyle(fontSize: 15, color: IosColors.muted)),
+            Text(count!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
           ],
           const Spacer(),
-          if (note != null) Text(note!, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+          if (note != null) Text(note!, style: TextStyle(fontSize: 13, color: IosColors.muted)),
           if (action != null)
             Pressable(
               onTap: onAction,
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(action!, style: const TextStyle(fontSize: 15, color: IosColors.accent)),
+                  Text(action!, style: TextStyle(fontSize: 15, color: IosColors.accent)),
                   const SizedBox(width: 2),
                   AppIcon(actionIcon, size: 14, color: IosColors.accent, stroke: 2),
                 ]),
@@ -332,7 +451,7 @@ class InsetGroup extends StatelessWidget {
         if (title != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(36, 22, 20, 7),
-            child: Text(title!, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+            child: Text(title!, style: TextStyle(fontSize: 13, color: IosColors.muted)),
           ),
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -340,7 +459,8 @@ class InsetGroup extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: Column(children: [
             for (var i = 0; i < children.length; i++) ...[
-              if (i > 0) const Padding(padding: EdgeInsets.only(left: 52), child: Divider(height: 1, thickness: .5, color: IosColors.line)),
+              // 有图标的行，分隔线从文字开始；没有图标时从行首的文字边距开始。
+              if (i > 0) Padding(padding: EdgeInsets.only(left: children[i] is IosRow && (children[i] as IosRow).icon == null ? 16 : 52), child: Divider(height: 1, thickness: .5, color: IosColors.line)),
               children[i],
             ],
           ]),
@@ -348,7 +468,7 @@ class InsetGroup extends StatelessWidget {
         if (footer != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(36, 7, 32, 0),
-            child: Text(footer!, style: const TextStyle(fontSize: 13, height: 1.45, color: IosColors.muted)),
+            child: Text(footer!, style: TextStyle(fontSize: 13, height: 1.45, color: IosColors.muted)),
           ),
       ]);
 }
@@ -365,9 +485,13 @@ class IosRow extends StatelessWidget {
   final bool chevron;
   final bool destructive;
 
+  /// 只展示信息、不能点的行（没有箭头也没有操作）照常显示，不按「不可用」变淡。
+  bool get _informational => onTap == null && !chevron;
+
   @override
   Widget build(BuildContext context) => Pressable(
         onTap: onTap,
+        dimWhenDisabled: !_informational,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 52),
           child: Padding(
@@ -379,14 +503,14 @@ class IosRow extends StatelessWidget {
                   Text(title, style: TextStyle(fontSize: 17, color: destructive ? IosColors.accent : IosColors.ink)),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
-                    Text(subtitle!, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: IosColors.muted)),
+                    Text(subtitle!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
                   ],
                 ]),
               ),
               const SizedBox(width: 8),
               ?valueWidget,
-              if (value != null) Text(value!, style: const TextStyle(fontSize: 15, color: IosColors.muted)),
-              if (chevron && onTap != null) ...[const SizedBox(width: 6), const AppIcon('right', size: 14, color: IosColors.muted, stroke: 2)],
+              if (value != null) Text(value!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
+              if (chevron && onTap != null) ...[const SizedBox(width: 6), AppIcon('right', size: 14, color: IosColors.muted, stroke: 2)],
             ]),
           ),
         ),
@@ -439,26 +563,28 @@ class AccentButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 22),
           decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(23)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text(label, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
-            if (icon != null) ...[const SizedBox(width: 8), AppIcon(icon!, size: 18, color: Colors.white, stroke: 1.9)],
+            Text(label, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.onAccent)),
+            if (icon != null) ...[const SizedBox(width: 8), AppIcon(icon!, size: 18, color: IosColors.onAccent, stroke: 1.9)],
           ]),
         ),
       );
 }
 
 class TextAction extends StatelessWidget {
-  const TextAction({super.key, required this.label, required this.onTap, this.color = IosColors.accent});
+  const TextAction({super.key, required this.label, required this.onTap, this.color});
 
   final String label;
   final VoidCallback? onTap;
-  final Color color;
+
+  /// 默认强调色。
+  final Color? color;
 
   @override
   Widget build(BuildContext context) => Pressable(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-          child: Text(label, style: TextStyle(fontSize: 17, color: color, fontWeight: FontWeight.w500)),
+          child: Text(label, style: TextStyle(fontSize: 17, color: color ?? IosColors.accent, fontWeight: FontWeight.w500)),
         ),
       );
 }
