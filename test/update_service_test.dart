@@ -1,5 +1,32 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pastemangax/core/store.dart';
 import 'package:pastemangax/core/update_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// 假网络层：按 host 决定返回什么，用来验证直连失败后是否切镜像。
+class _MirrorAdapter implements HttpClientAdapter {
+  _MirrorAdapter(this.respond);
+
+  final (int, Object?) Function(String host) respond;
+  final hosts = <String>[];
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions o, Stream<Uint8List>? body, Future<void>? cancel) async {
+    hosts.add(o.uri.host);
+    final (status, json) = respond(o.uri.host);
+    if (status < 0) throw DioException(requestOptions: o, type: DioExceptionType.connectionTimeout);
+    return ResponseBody.fromString(jsonEncode(json), status, headers: {
+      Headers.contentTypeHeader: ['application/json; charset=utf-8'],
+    });
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 Map<String, dynamic> release({String tag = 'v0.3.0', List<Map<String, dynamic>>? assets, String body = '## 更新\n- 书架排序\n- **省流**画质'}) => {
       'tag_name': tag,
@@ -94,5 +121,84 @@ void main() {
 
   test('Release 说明去掉 Markdown 记号', () {
     expect(plainNotes('## 更新\n- 书架排序\n* **省流**画质\n\n\n\n`fix`'), '更新\n• 书架排序\n• 省流画质\n\nfix');
+  });
+
+  group('镜像源', () {
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      await initStores();
+      UpdateService.instance.currentForTest = '0.2.0';
+      ReaderPrefs.instance.skipVersion = '';
+    });
+
+    test('直连可用就不走镜像', () async {
+      final fake = _MirrorAdapter((host) => host == 'api.github.com' ? (200, release()) : (200, release(tag: 'v9.9.9')));
+      UpdateService.instance.adapter = fake;
+      final r = await UpdateService.instance.check();
+      expect(r.status, UpdateStatus.available);
+      expect(fake.hosts, ['api.github.com']);
+    });
+
+    test('直连超时就换镜像，拿到的是镜像返回的版本', () async {
+      final fake = _MirrorAdapter((host) => host == 'api.github.com' ? (-1, null) : (200, release(tag: 'v0.4.0')));
+      UpdateService.instance.adapter = fake;
+      final r = await UpdateService.instance.check();
+      expect(fake.hosts.first, 'api.github.com');
+      expect(fake.hosts.length, 2);
+      expect(r.status, UpdateStatus.available);
+      expect(r.release!.version, '0.4.0');
+    });
+
+    test('镜像返回 200 但不是 Release 内容，继续判定为失败而不是当成新版本', () async {
+      final fake = _MirrorAdapter((host) => (200, {'error': 'rate limited'}));
+      UpdateService.instance.adapter = fake;
+      final r = await UpdateService.instance.check();
+      expect(r.status, UpdateStatus.failed);
+      expect(r.release, isNull);
+    });
+
+    test('404 是 GitHub 的明确回答，不再试镜像', () async {
+      final fake = _MirrorAdapter((host) => (404, {'message': 'Not Found'}));
+      UpdateService.instance.adapter = fake;
+      final r = await UpdateService.instance.check();
+      expect(r.status, UpdateStatus.noRelease);
+      expect(fake.hosts.length, 1);
+    });
+
+    test('自动检查：开关关掉就完全不请求', () async {
+      final fake = _MirrorAdapter((host) => (200, release(tag: 'v0.4.0')));
+      UpdateService.instance.adapter = fake;
+      ReaderPrefs.instance.autoUpdate = false;
+      expect(await UpdateService.instance.autoCheck(), isNull);
+      expect(fake.hosts, isEmpty);
+    });
+
+    test('自动检查：开关打开且有新版本时返回结果', () async {
+      final fake = _MirrorAdapter((host) => (200, release(tag: 'v0.4.0')));
+      UpdateService.instance.adapter = fake;
+      ReaderPrefs.instance.autoUpdate = true;
+      ReaderPrefs.instance.lastUpdateCheck = 0;
+      final r = await UpdateService.instance.autoCheck();
+      expect(r, isNotNull);
+      expect(r!.release!.version, '0.4.0');
+    });
+
+    test('自动检查：刚查过 10 分钟内不重复请求', () async {
+      final fake = _MirrorAdapter((host) => (200, release(tag: 'v0.4.0')));
+      UpdateService.instance.adapter = fake;
+      ReaderPrefs.instance.autoUpdate = true;
+      ReaderPrefs.instance.lastUpdateCheck = DateTime.now().millisecondsSinceEpoch;
+      expect(await UpdateService.instance.autoCheck(), isNull);
+      expect(fake.hosts, isEmpty);
+    });
+
+    test('自动检查：被跳过的版本不再提示', () async {
+      final fake = _MirrorAdapter((host) => (200, release(tag: 'v0.4.0')));
+      UpdateService.instance.adapter = fake;
+      ReaderPrefs.instance.autoUpdate = true;
+      ReaderPrefs.instance.lastUpdateCheck = 0;
+      ReaderPrefs.instance.skipVersion = '0.4.0';
+      expect(await UpdateService.instance.autoCheck(), isNull);
+    });
   });
 }

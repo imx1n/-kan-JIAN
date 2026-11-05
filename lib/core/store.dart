@@ -370,11 +370,21 @@ class ReaderPrefs extends ChangeNotifier {
     'shelfSort': 0,
     'lastShelfSync': 0,
     'lastUpdateCheck': 0,
+    // 每次启动自动检查更新；用户可以在「我的」里关掉。
+    'autoUpdate': true,
     'skipVersion': '',
     'searchHistory': '',
     'lineHeight': 1.85,
+    // 小说翻页方式：true 左右翻页，false 整章上下滚动。
+    'novelPaged': true,
     'reduceTransparency': false,
     'appearance': 0,
+    // 线路：0 自动，1 固定线路，2 自定义基址。
+    'apiMode': 0,
+    'apiRoute': 'hotmangas',
+    'apiCustom': '',
+    // 轻小说书签：`书号:章节序号` 换行分隔。
+    'novelBookmarks': '',
   };
 
   final _v = Map<String, Object>.of(defaults);
@@ -437,6 +447,10 @@ class ReaderPrefs extends ChangeNotifier {
   int get lastUpdateCheck => _get('lastUpdateCheck');
   set lastUpdateCheck(int v) => _set('lastUpdateCheck', v);
 
+  /// 每次启动自动检查更新；关掉后只有手动「检查更新」才查。
+  bool get autoUpdate => _get('autoUpdate');
+  set autoUpdate(bool v) => _set('autoUpdate', v);
+
   /// 用户选择跳过的版本号（不带 v）。
   String get skipVersion => _get('skipVersion');
   set skipVersion(String v) => _set('skipVersion', v);
@@ -445,10 +459,52 @@ class ReaderPrefs extends ChangeNotifier {
   double get lineHeight => _get('lineHeight');
   set lineHeight(double v) => _set('lineHeight', v);
 
+  /// 小说翻页方式：true 左右翻页（默认，和设计稿的页码一致），false 整章上下滚动。
+  bool get novelPaged => _get('novelPaged');
+  set novelPaged(bool v) => _set('novelPaged', v);
+
+  /// 一本书的书签（章节序号集合）。[key] 用书号，轻小说和示例小说分开存。
+  Set<int> novelBookmarks(String key) {
+    final raw = _get<String>('novelBookmarks');
+    if (raw.isEmpty) return <int>{};
+    return {
+      for (final line in raw.split('\n'))
+        if (line.startsWith('$key:')) ...{int.tryParse(line.substring(key.length + 1)) ?? -1},
+    }..remove(-1);
+  }
+
+  bool isBookmarked(String key, int chapter) => novelBookmarks(key).contains(chapter);
+
+  /// 切换一章的书签，返回切换后的状态。
+  bool toggleBookmark(String key, int chapter) {
+    final all = {for (final line in _get<String>('novelBookmarks').split('\n')) if (line.isNotEmpty) line};
+    final tag = '$key:$chapter';
+    final on = !all.contains(tag);
+    if (on) {
+      all.add(tag);
+    } else {
+      all.remove(tag);
+    }
+    _set('novelBookmarks', all.join('\n'));
+    return on;
+  }
+
   /// iOS「减少透明度」：玻璃控件改为实底。
   /// 外观：0 跟随系统、1 浅色、2 深色。
   int get appearance => _get('appearance');
   set appearance(int v) => _set('appearance', v);
+
+  /// 线路模式：0 自动（启动时测速选最快）、1 固定线路、2 自定义基址。
+  int get apiMode => _get('apiMode');
+  set apiMode(int v) => _set('apiMode', v.clamp(0, 2));
+
+  /// 固定模式下的线路 id（见 `AppConfig.routes`）。
+  String get apiRoute => _get('apiRoute');
+  set apiRoute(String v) => _set('apiRoute', v);
+
+  /// 自定义基址，例如自建反代 `https://api.example.com`；空串表示未填。
+  String get apiCustom => _get('apiCustom');
+  set apiCustom(String v) => _set('apiCustom', v.trim());
 
   bool get reduceTransparency => _get('reduceTransparency');
   set reduceTransparency(bool v) => _set('reduceTransparency', v);

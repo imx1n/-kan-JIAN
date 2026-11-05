@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 
 import 'config.dart';
 import 'models.dart';
+import 'routes.dart';
+import 'store.dart';
 
 class ApiException implements Exception {
   const ApiException(this.message);
@@ -69,44 +71,60 @@ class MangaApi {
   @visibleForTesting
   set adapter(HttpClientAdapter a) => _dio.httpClientAdapter = a;
 
-  /// 最近一次成功的主机，下次优先使用。
-  int _hostIndex = 0;
+  /// 最近一次成功的主机，供界面显示。
+  String get activeHost => RouteSelector.instance.activeHost;
 
-  String get activeHost => AppConfig.apiHosts[_hostIndex];
-
+  /// 选路：按 [RouteSelector.candidates] 的顺序尝试。网络失败换下一台（该台冷却
+  /// 60 秒）；`results == null` 是请求头/版本被判不合格，换主机也没用，直接报错。
   Future<Map<String, dynamic>> _get(String path, [Map<String, Object?> query = const {}, String? token]) async {
     final params = {...query, 'platform': 3, 'region': 0};
     final options = token == null ? null : Options(headers: {'authorization': 'Token $token'});
+    final selector = RouteSelector.instance;
+    final hosts = selector.candidates();
     Object? lastFailure;
-    for (var i = 0; i < AppConfig.apiHosts.length; i++) {
-      final idx = (_hostIndex + i) % AppConfig.apiHosts.length;
-      final host = AppConfig.apiHosts[idx];
+    var authRejected = false;
+    var lastHost = hosts.isEmpty ? selector.activeBase : hosts.first;
+    for (final host in hosts) {
+      final sw = Stopwatch()..start();
+      lastHost = host;
       try {
         final res = await _dio.get<Object>('$host$path', queryParameters: params, options: options);
         final body = res.data is String ? jsonDecode(res.data as String) : res.data;
         if (body is Map && body['results'] is Map) {
-          _hostIndex = idx;
+          selector.reportSuccess(host, sw.elapsedMilliseconds);
           if (lastError.value != null) lastError.value = null;
           return Map<String, dynamic>.from(body['results'] as Map);
         }
-        // results:null 是校验未过的静默失败，换下一个主机。
-        lastFailure = ApiException(
+        // 请求头或版本被判不合格：换线路不会变好，不用白试剩下的主机。
+        final failure = ApiException(
           body is Map ? '数据源拒绝请求（${body['code']}：${body['message']}）' : '数据源返回了无法识别的内容',
         );
+        lastError.value = ApiDiagnosis(host: Uri.parse(host).host, message: failure.message, at: DateTime.now());
+        throw failure;
       } on DioException catch (e) {
-        if (token != null && e.response?.statusCode == 401) throw const AuthExpired();
+        // 带凭证的请求被判 401：凭证失效，不是这台主机的网络问题，不冷却它。
+        if (token != null && e.response?.statusCode == 401) {
+          authRejected = true;
+          continue;
+        }
+        selector.reportFailure(host);
         lastFailure = e;
       } on FormatException {
+        selector.reportFailure(host);
         lastFailure = const ApiException('数据源返回了无法识别的内容');
       }
     }
+    if (authRejected) throw const AuthExpired();
     final failure = lastFailure is ApiException ? lastFailure : ApiException(_describe(lastFailure));
-    lastError.value = ApiDiagnosis(
-      host: Uri.parse(AppConfig.apiHosts[_hostIndex]).host,
-      message: failure.message,
-      at: DateTime.now(),
-    );
+    lastError.value = ApiDiagnosis(host: Uri.parse(lastHost).host, message: failure.message, at: DateTime.now());
     throw failure;
+  }
+
+  /// 启动时按当前模式测一次速；「自动」下这是选出最快线路的唯一依据。
+  Future<void> warmUp() async {
+    final prefs = ReaderPrefs.instance;
+    if (prefs.apiMode == 2 && RouteSelector.normalizeBase(prefs.apiCustom).isNotEmpty) return;
+    await RouteSelector.instance.probe(_dio, all: prefs.apiMode == 0);
   }
 
   static String _describe(Object? e) {

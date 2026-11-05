@@ -1,9 +1,12 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/account.dart';
+import '../core/config.dart';
+import '../core/installer.dart';
 import '../core/models.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
@@ -377,6 +380,7 @@ Future<void> iosContinue(BuildContext context, ShelfEntry e) {
 
 /* ───────── 更新 ───────── */
 
+/// 新版本弹窗：公告取 GitHub Release 的正文，Android 可以在应用内下载并直接安装。
 Future<void> showIosUpdateDialog(BuildContext context, UpdateResult r) {
   final release = r.release!;
   final meta = [
@@ -385,51 +389,184 @@ Future<void> showIosUpdateDialog(BuildContext context, UpdateResult r) {
     if (release.publishedAt != null) '${release.publishedAt!.month}月${release.publishedAt!.day}日发布',
   ].join(' · ');
   final notes = plainNotes(release.notes);
-  return showCupertinoDialog<void>(
-    context: context,
-    builder: (dialog) => CupertinoAlertDialog(
-      title: Text('发现新版本 v${release.version}'),
-      content: Column(
-        children: [
-          const SizedBox(height: 4),
-          Text(meta, style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 200),
-            child: SingleChildScrollView(
-              child: Text(notes.isEmpty ? release.title : notes, textAlign: TextAlign.left, style: const TextStyle(fontSize: 13, height: 1.5)),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        CupertinoDialogAction(
-          onPressed: () {
-            ReaderPrefs.instance.skipVersion = release.version;
-            Navigator.pop(dialog);
-          },
-          child: const Text('跳过此版本'),
-        ),
-        CupertinoDialogAction(onPressed: () => Navigator.pop(dialog), child: const Text('以后')),
-        CupertinoDialogAction(
-          isDefaultAction: true,
-          onPressed: () {
-            Navigator.pop(dialog);
-            launchUrl(Uri.parse(release.downloadUrl), mode: LaunchMode.externalApplication);
-          },
-          child: const Text('下载'),
-        ),
-      ],
-    ),
-  );
+  return showAppSheet<void>(context, (_) => _UpdateSheet(release: release, meta: meta, notes: notes.isEmpty ? release.title : notes));
 }
 
-/// 「我的」里的手动检查。
+class _UpdateSheet extends StatefulWidget {
+  const _UpdateSheet({required this.release, required this.meta, required this.notes});
+
+  final AppRelease release;
+  final String meta;
+  final String notes;
+
+  @override
+  State<_UpdateSheet> createState() => _UpdateSheetState();
+}
+
+class _UpdateSheetState extends State<_UpdateSheet> {
+  double? _progress;
+  bool _downloading = false;
+  String? _error;
+
+  /// 只有 Android 且真有安装包时才能应用内下载；其余走浏览器。
+  bool get _canInstall => defaultTargetPlatform == TargetPlatform.android && widget.release.packageUrl != null;
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = null;
+      _error = null;
+    });
+    try {
+      final file = await UpdateService.instance.download(widget.release, onProgress: (p) {
+        if (mounted) setState(() => _progress = p);
+      });
+      final opened = await AppInstaller.install(file.path);
+      if (!mounted) return;
+      setState(() => _downloading = false);
+      if (!opened) showIosToast(context, '请允许「安装未知应用」后再点一次下载');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _error = '$e';
+      });
+    }
+  }
+
+  void _openBrowser() {
+    Navigator.pop(context);
+    launchUrl(Uri.parse(widget.release.downloadUrl), mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: EdgeInsets.fromLTRB(14, 0, 14, MediaQuery.paddingOf(context).bottom + 10),
+        child: Glass(
+          radius: 30,
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 5,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(color: const Color(0x33000000), borderRadius: BorderRadius.circular(3)),
+                ),
+              ),
+              Text('发现新版本 v${widget.release.version}', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              const SizedBox(height: 4),
+              Text(widget.meta, style: TextStyle(fontSize: 12, color: IosColors.muted)),
+              const SizedBox(height: 14),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Text(widget.notes, style: TextStyle(fontSize: 14, height: 1.6, color: IosColors.ink)),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: TextStyle(fontSize: 13, color: IosColors.accent)),
+                const SizedBox(height: 6),
+                Center(
+                  child: TextAction(
+                    label: '打开 Releases 手动下载',
+                    color: IosColors.accent,
+                    onTap: () async {
+                      Navigator.pop(context);
+                      await launchUrl(Uri.parse(AppConfig.githubReleasesPage), mode: LaunchMode.externalApplication);
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              if (_downloading) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(
+                    value: _progress,
+                    minHeight: 5,
+                    backgroundColor: IosColors.faint,
+                    valueColor: AlwaysStoppedAnimation(IosColors.accent),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    _progress == null ? '正在下载…' : '正在下载 ${(_progress! * 100).round()}%',
+                    style: TextStyle(fontSize: 13, color: IosColors.muted),
+                  ),
+                ),
+              ] else
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextAction(
+                        label: '跳过此版本',
+                        color: IosColors.muted,
+                        onTap: () {
+                          ReaderPrefs.instance.skipVersion = widget.release.version;
+                          Navigator.pop(context);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Pressable(
+                      onTap: _canInstall ? _download : _openBrowser,
+                      child: Container(
+                        height: 46,
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(23)),
+                        child: Center(
+                          child: Text(
+                            _canInstall ? '下载并安装' : '下载',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: IosColors.onAccent),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              if (_canInstall && !_downloading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Center(
+                    child: TextAction(label: '用浏览器下载', color: IosColors.muted, onTap: _openBrowser),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+}
+
+/// 「我的」里的手动检查。检查失败时可以直接打开 Releases 页手动下载。
 Future<UpdateResult> iosManualUpdateCheck(BuildContext context) async {
   final r = await UpdateService.instance.check();
   if (!context.mounted) return r;
   if (r.status == UpdateStatus.available) {
     await showIosUpdateDialog(context, r);
+  } else if (r.status == UpdateStatus.failed) {
+    final open = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (dialog) => CupertinoAlertDialog(
+        title: const Text('检查更新失败'),
+        content: Text('${r.message ?? '无法连接更新服务'}\n\n可以打开项目 Releases 页手动下载。'),
+        actions: [
+          CupertinoDialogAction(onPressed: () => Navigator.pop(dialog, false), child: const Text('稍后')),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(dialog, true),
+            child: const Text('打开 Releases'),
+          ),
+        ],
+      ),
+    );
+    if (open == true) await launchUrl(Uri.parse(AppConfig.githubReleasesPage), mode: LaunchMode.externalApplication);
   } else {
     showIosToast(context, switch (r.status) {
       UpdateStatus.upToDate => r.message ?? '已是最新版本 v${r.current}',

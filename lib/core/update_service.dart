@@ -1,9 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'config.dart';
 import 'store.dart';
+import 'api.dart' show ApiException;
 
 /// GitHub Releases 上的一个版本。
 class AppRelease {
@@ -99,9 +104,6 @@ class UpdateService {
 
   static final instance = UpdateService._();
 
-  /// 自动检查的最短间隔。
-  static const autoInterval = Duration(hours: 24);
-
   final _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 15),
@@ -111,6 +113,10 @@ class UpdateService {
   ));
 
   String? _current;
+
+  /// 测试里替换网络层。
+  @visibleForTesting
+  set adapter(HttpClientAdapter a) => _dio.httpClientAdapter = a;
 
   Future<String> currentVersion() async => _current ??= (await PackageInfo.fromPlatform()).version;
 
@@ -123,17 +129,37 @@ class UpdateService {
 
   Future<UpdateResult> check() async {
     final current = await currentVersion();
-    try {
-      final res = await _dio.get<Object>(AppConfig.releasesApi);
-      ReaderPrefs.instance.lastUpdateCheck = DateTime.now().millisecondsSinceEpoch;
-      return resolve(res.statusCode ?? 0, res.data, current, ext: _ios ? '.ipa' : '.apk', requirePackage: _ios);
-    } on DioException catch (e) {
-      final msg = switch (e.type) {
-        DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout => '连接 GitHub 超时，请检查网络或代理',
-        _ => '无法连接 GitHub，请检查网络或代理',
-      };
-      return UpdateResult(UpdateStatus.failed, current: current, message: msg);
+    final prefs = ReaderPrefs.instance;
+    Object? lastError;
+    var lastStatus = 0;
+    // 依次尝试：直连 → 镜像。任何一台拿到合法响应就停。
+    for (final base in AppConfig.githubApiMirrors) {
+      try {
+        final res = await _dio.get<Object>('$base${AppConfig.releasesApi}');
+        lastStatus = res.statusCode ?? 0;
+        final body = res.data is String ? jsonDecode(res.data as String) : res.data;
+        // 镜像可能返回 200 但内容不是 Release（例如错误页），当作这台不可用。
+        if (lastStatus == 200 && body is Map && body['tag_name'] != null) {
+          prefs.lastUpdateCheck = DateTime.now().millisecondsSinceEpoch;
+          return resolve(lastStatus, body, current, ext: _ios ? '.ipa' : '.apk', requirePackage: _ios);
+        }
+        // 404/403 是 GitHub 的明确回答，直接按它给结论，不再换镜像。
+        if (lastStatus == 404 || lastStatus == 403 || lastStatus == 429) {
+          return resolve(lastStatus, body, current, ext: _ios ? '.ipa' : '.apk', requirePackage: _ios);
+        }
+        lastError = res.data;
+      } on DioException catch (e) {
+        lastError = e;
+      } on FormatException catch (e) {
+        lastError = e;
+      }
     }
+    final msg = switch (lastError) {
+      DioException(type: DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout) => '连接 GitHub 超时，请检查网络或代理',
+      DioException() => '无法连接 GitHub，请检查网络或代理',
+      _ => '更新检测返回了无法识别的内容',
+    };
+    return UpdateResult(UpdateStatus.failed, current: current, message: msg);
   }
 
   /// 根据 HTTP 状态和响应体得出结论（单独拿出来便于测试）。
@@ -159,9 +185,51 @@ class UpdateService {
     return UpdateResult(newer ? UpdateStatus.available : UpdateStatus.upToDate, current: current, release: release);
   }
 
-  /// 启动时自动检查：24 小时内只查一次；有新版本且没被跳过时返回结果，否则返回 null。
+  /// 启动自动检查的节流：同一版本号查过就不再查，但换了版本号或隔了一天会重查。
+  /// 用户要求「每次进入软件自动检测」，所以这里不再用 24 小时硬性拦截，
+  /// 改成 10 分钟内不重复请求，避免冷启动几次就撞 GitHub 限流。
+  static const autoInterval = Duration(minutes: 10);
+
+  /// 下载安装包，返回本地文件。依次尝试直连和各镜像。
+  ///
+  /// [onProgress] 收到 0–1 的进度；总大小未知时传 null。
+  Future<File> download(AppRelease release, {void Function(double? progress)? onProgress}) async {
+    final url = release.packageUrl;
+    if (url == null) throw const ApiException('这个版本没有安装包');
+    final dir = await getTemporaryDirectory();
+    final name = url.split('/').last.split('?').first;
+    final file = File('${dir.path}/$name');
+    Object? lastError;
+    for (final base in AppConfig.githubDownloadMirrors) {
+      // 已经是完整地址的镜像只拼在前面；直连是空前缀。
+      final full = base.isEmpty ? url : '$base$url';
+      try {
+        await _dio.download(
+          full,
+          file.path,
+          deleteOnError: true,
+          onReceiveProgress: (got, total) => onProgress?.call(total > 0 ? got / total : null),
+        );
+        if (await file.length() > 1024) return file;
+        lastError = const ApiException('下载到的文件不完整');
+      } on DioException catch (e) {
+        lastError = e;
+        if (await file.exists()) await file.delete();
+      }
+    }
+    throw ApiException(switch (lastError) {
+      DioException(type: DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout) => '下载超时，请切换到其他线路再试',
+      DioException() => '下载失败，请检查网络或代理',
+      ApiException(message: final m) => m,
+      _ => '下载失败',
+    });
+  }
+
+  /// 启动时自动检查：开关关掉就不查；10 分钟内查过不重复查。
+  /// 有新版本且没被跳过时返回结果，否则返回 null。
   Future<UpdateResult?> autoCheck() async {
     final prefs = ReaderPrefs.instance;
+    if (!prefs.autoUpdate) return null;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - prefs.lastUpdateCheck < autoInterval.inMilliseconds) return null;
     final r = await check();

@@ -6,6 +6,9 @@ import '../core/store.dart';
 import '../data/sample_novel.dart';
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/novel_body.dart';
+import '../ui/novel_pages.dart';
+import 'ios_catalog.dart';
 import 'ios_theme.dart';
 
 /// 纸张：纸白、暖纸、深色。对应偏好里的配色下标 0 / 1 / 3（旧版的雾绿按纸白显示）。
@@ -44,10 +47,11 @@ class IosNovelPage extends StatefulWidget {
 class _IosNovelPageState extends State<IosNovelPage> {
   final _p = ReaderPrefs.instance;
   final _store = LibraryStore.instance;
-  final _scroll = ScrollController();
-  final _bookmarks = <int>{};
+  final _bodyKey = GlobalKey<NovelBodyState>();
   int _chapter = 0;
   double _progress = 0;
+  int _page = 1;
+  int _pages = 1;
   bool _chrome = true;
 
   @override
@@ -59,25 +63,12 @@ class _IosNovelPageState extends State<IosNovelPage> {
       _chapter = saved;
       _progress = e!.progress;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_scroll.hasClients && _progress > 0) _scroll.jumpTo(_progress * _scroll.position.maxScrollExtent);
-      setState(() {});
-    });
-    _scroll.addListener(_onScroll);
   }
 
   @override
   void dispose() {
-    _scroll.dispose();
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
     super.dispose();
-  }
-
-  void _onScroll() {
-    final max = _scroll.position.maxScrollExtent;
-    final v = max <= 0 ? 1.0 : (_scroll.offset / max).clamp(0.0, 1.0);
-    if ((v - _progress).abs() > .005) setState(() => _progress = v);
   }
 
   void _save() => _store.recordPosition(
@@ -93,33 +84,33 @@ class _IosNovelPageState extends State<IosNovelPage> {
     setState(() {
       _chapter = i;
       _progress = 0;
+      _page = 1;
+      _pages = 1;
     });
-    if (_scroll.hasClients) _scroll.jumpTo(0);
     _save();
   }
 
-  (int, int) _pages() {
-    if (!_scroll.hasClients || !_scroll.position.hasContentDimensions) return (1, 1);
-    final view = _scroll.position.viewportDimension;
-    final total = ((_scroll.position.maxScrollExtent + view) / view).ceil().clamp(1, 999);
-    return ((_progress * (total - 1)).round() + 1, total);
-  }
-
   Future<void> _toc() async {
-    final i = await showIosChoices(
+    final i = await showIosCatalog(
       context,
-      title: '目录',
-      options: [for (var i = 0; i < SampleNovel.chapters.length; i++) '${SampleNovel.chapterLabels[i]}  ${SampleNovel.chapters[i].title}${_bookmarks.contains(i) ? '  · 书签' : ''}'],
-      selected: _chapter,
+      sections: [
+        NovelTocSection(
+          name: '全部章节',
+          entries: [for (var i = 0; i < SampleNovel.chapters.length; i++) NovelTocEntry(index: i, name: '${SampleNovel.chapterLabels[i]}  ${SampleNovel.chapters[i].title}')],
+        ),
+      ],
+      currentIndex: _chapter,
+      title: SampleNovel.title,
+      bookmarkKey: SampleNovel.id,
     );
     if (i != null) _goChapter(i);
   }
 
   void _toggleBookmark() {
-    final had = _bookmarks.contains(_chapter);
-    setState(() => had ? _bookmarks.remove(_chapter) : _bookmarks.add(_chapter));
+    final on = _p.toggleBookmark(SampleNovel.id, _chapter);
+    setState(() {});
     HapticFeedback.selectionClick();
-    showIosToast(context, had ? '已取消本章书签' : '已为本章添加书签', dark: _Paper.of(_p.theme).dark);
+    showIosToast(context, on ? '已为本章添加书签' : '已取消本章书签', dark: _Paper.of(_p.theme).dark);
   }
 
   @override
@@ -132,8 +123,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
       final style = _bodyStyle(_p, paper);
       final top = MediaQuery.paddingOf(context).top;
       final bottom = MediaQuery.paddingOf(context).bottom;
-      final (page, pages) = _pages();
-      final marked = _bookmarks.contains(_chapter);
+      final marked = _p.isBookmarked(SampleNovel.id, _chapter);
       return PopScope(
         onPopInvokedWithResult: (_, _) => _save(),
         child: Scaffold(
@@ -141,43 +131,42 @@ class _IosNovelPageState extends State<IosNovelPage> {
           body: Stack(
             children: [
               Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _chrome = !_chrome),
-                  child: NotificationListener<ScrollEndNotification>(
-                    onNotification: (_) {
-                      _save();
-                      return false;
-                    },
-                    child: ListView(
-                      controller: _scroll,
-                      physics: const BouncingScrollPhysics(),
-                      padding: EdgeInsets.fromLTRB(28, top + 70, 28, bottom + 120),
-                      children: [
-                        Text(SampleNovel.chapterLabels[_chapter], style: TextStyle(fontSize: 13, color: paper.muted)),
-                        const SizedBox(height: 6),
-                        Text(
-                          ch.title,
-                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: paper.ink),
-                        ),
-                        const SizedBox(height: 22),
-                        for (final para in ch.paragraphs)
-                          Padding(
-                            padding: EdgeInsets.only(bottom: style.fontSize! * .9),
-                            child: novelParagraph(para, style),
-                          ),
-                        const SizedBox(height: 18),
-                        if (_chapter < SampleNovel.chapters.length - 1)
-                          Center(
-                            child: TextAction(label: '下一章 · ${SampleNovel.chapters[_chapter + 1].title}', color: paper.ink, onTap: () => _goChapter(_chapter + 1)),
-                          )
-                        else
-                          Center(
-                            child: Text('— 全文完 —', style: TextStyle(fontSize: 13, color: paper.muted)),
-                          ),
-                      ],
-                    ),
-                  ),
+                child: NovelBody(
+                  key: _bodyKey,
+                  contentId: '${SampleNovel.id}:$_chapter',
+                  blocks: [
+                    for (final para in ch.paragraphs) para,
+                    const NovelEndBlock(),
+                  ],
+                  style: style,
+                  ink: paper.ink,
+                  muted: paper.muted,
+                  paged: _p.novelPaged,
+                  padding: EdgeInsets.fromLTRB(28, top + 70, 28, bottom + 96),
+                  initialProgress: _progress,
+                  onProgress: (p, n, v) {
+                    if (p == _page && n == _pages) return;
+                    setState(() {
+                      _page = p;
+                      _pages = n;
+                      _progress = v;
+                    });
+                  },
+                  onTapCenter: () => setState(() => _chrome = !_chrome),
+                  onTapRight: () {
+                    if (_chapter >= SampleNovel.chapters.length - 1 || _page < _pages) return false;
+                    _goChapter(_chapter + 1);
+                    return true;
+                  },
+                  onTapLeft: () {
+                    if (_chapter <= 0 || _page > 1) return false;
+                    _goChapter(_chapter - 1);
+                    return true;
+                  },
+                  header: NovelChapterHeader(label: SampleNovel.chapterLabels[_chapter], title: ch.title, ink: paper.ink, muted: paper.muted),
+                  endCard: _chapter < SampleNovel.chapters.length - 1
+                      ? TextAction(label: '下一章 · ${SampleNovel.chapters[_chapter + 1].title}', color: paper.ink, onTap: () => _goChapter(_chapter + 1))
+                      : Text('— 全文完 —', style: TextStyle(fontSize: 13, color: paper.muted)),
                 ),
               ),
               Positioned.fill(
@@ -245,10 +234,7 @@ class _IosNovelPageState extends State<IosNovelPage> {
                       child: Row(
                         children: [
                           Expanded(child: _barButton('list', '目录', paper, _toc)),
-                          Text(
-                            '$page  /  $pages',
-                            style: TextStyle(fontSize: 15, color: paper.ink, fontFeatures: const [FontFeature.tabularFigures()]),
-                          ),
+                          NovelPageLabel(page: _page, pages: _pages, color: paper.ink),
                           Expanded(
                             child: _barButton('settings', '阅读设置', paper, () {
                               showNovelAppearance(context);
@@ -456,6 +442,26 @@ class _AppearanceSheetState extends State<_AppearanceSheet> {
             ],
           ],
         ),
+        const SizedBox(height: 14),
+        _card([
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Row(
+              children: [
+                Text('翻页方式', style: TextStyle(fontSize: 15, color: IosColors.ink)),
+                const Spacer(),
+                SizedBox(
+                  width: 168,
+                  child: IosSegmented(
+                    options: const ['左右翻页', '上下滚动'],
+                    selected: _p.novelPaged ? 0 : 1,
+                    onChanged: (i) => _p.novelPaged = i == 0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ]),
         const SizedBox(height: 14),
         Pressable(
           onTap: () => setState(() => _typography = true),

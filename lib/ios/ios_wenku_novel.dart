@@ -9,7 +9,10 @@ import '../core/wenku.dart';
 import '../core/wenku_models.dart';
 import '../ui/icons.dart';
 import '../ui/motion.dart';
-import 'ios_novel.dart' show novelBodyStyle, novelPaperColors, novelParagraph, showNovelAppearance;
+import '../ui/novel_body.dart';
+import '../ui/novel_pages.dart';
+import 'ios_catalog.dart';
+import 'ios_novel.dart' show novelBodyStyle, novelPaperColors, showNovelAppearance;
 import 'ios_theme.dart';
 import 'ios_wenku.dart' show WenkuShelfButton, openWenkuLogin;
 
@@ -30,7 +33,7 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
   final _svc = WenkuService.instance;
   final _store = LibraryStore.instance;
   final _prefs = ReaderPrefs.instance;
-  final _scroll = ScrollController();
+  final _bodyKey = GlobalKey<NovelBodyState>();
 
   WenkuCatalog? _catalog;
   String _title = '';
@@ -40,6 +43,8 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
   bool _loading = true;
   bool _chrome = true;
   double _progress = 0;
+  int _page = 1;
+  int _pages = 1;
   String? _error;
   bool _needLogin = false;
 
@@ -47,22 +52,13 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
   void initState() {
     super.initState();
     _title = widget.name;
-    _scroll.addListener(_onScroll);
     _load();
   }
 
   @override
   void dispose() {
-    _scroll.dispose();
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
     super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_scroll.hasClients) return;
-    final max = _scroll.position.maxScrollExtent;
-    final v = max <= 0 ? 1.0 : (_scroll.offset / max).clamp(0.0, 1.0);
-    if ((v - _progress).abs() > .005) setState(() => _progress = v);
   }
 
   Future<void> _load() async {
@@ -109,20 +105,16 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
     try {
       final content = await _svc.content(aid: c.aid, cls: c.cls, cid: ch.cid);
       if (!mounted) return;
+      final e = _store.entry(wenkuIdOf(c.aid));
       setState(() {
         _content = content;
         _loading = false;
+        _page = 1;
+        _pages = 1;
+        // 只有「恢复上次阅读」才跳到上次的位置，手动翻章从头开始。
+        _progress = restore && e != null && e.chapterIndex == index ? e.progress : 0;
       });
       _saveProgress(restore: restore);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (_scroll.hasClients) {
-          final e = _store.entry(wenkuIdOf(c.aid));
-          final p = restore && e != null && e.chapterIndex == index ? e.progress : 0.0;
-          _scroll.jumpTo(p * _scroll.position.maxScrollExtent);
-          setState(() => _progress = p);
-        }
-      });
     } on WenkuNeedLogin catch (e) {
       if (!mounted) return;
       setState(() {
@@ -139,6 +131,9 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
     }
   }
 
+  /// 记下本章读到哪一页。[restore] 只是用来区分「恢复上次位置」和普通保存，
+  /// 两者都要存当前百分比——之前这里写成 `restore ? _progress : 0`，
+  /// 结果每翻一页都把进度清成 0，退出后再打开永远从第一页开始。
   void _saveProgress({bool restore = false}) {
     final c = _catalog;
     if (c == null || _content == null) return;
@@ -159,37 +154,58 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
       chapterName: ch.name,
       chapterIndex: _index,
       group: '${c.cls}',
-      progress: restore ? _progress : 0,
+      progress: _progress,
     );
   }
 
-  /// 本章书签（和示例小说页一样只在本次阅读里有效）。
-  final _bookmarks = <int>{};
-  bool get _marked => _bookmarks.contains(_index);
+  /// 本章书签：按书号存进偏好，关掉页面再打开还在。
+  String get _bookmarkKey => 'wenku-${widget.aid}';
+  bool get _marked => _prefs.isBookmarked(_bookmarkKey, _index);
 
   void _toggleBookmark() {
-    final had = _marked;
-    setState(() => had ? _bookmarks.remove(_index) : _bookmarks.add(_index));
+    final on = _prefs.toggleBookmark(_bookmarkKey, _index);
+    setState(() {});
     HapticFeedback.selectionClick();
-    showIosToast(context, had ? '已取消本章书签' : '已为本章添加书签', dark: novelPaperColors(_prefs.theme).dark);
+    showIosToast(context, on ? '已为本章添加书签' : '已取消本章书签', dark: novelPaperColors(_prefs.theme).dark);
   }
 
+  /// 分卷目录页；选中章节后跳过去。
   Future<void> _toc() async {
     final c = _catalog;
     if (c == null) return;
-    final i = await showIosChoices(
+    final sections = <NovelTocSection>[
+      for (final v in c.volumes)
+        if (v.chapters.isNotEmpty)
+          NovelTocSection(name: v.name, entries: [for (final ch in v.chapters) NovelTocEntry(index: ch.index, name: ch.name)]),
+      // 目录里没有卷标记时，源站返回的章节会被归到第 0 卷，这里兜住。
+      if (c.volumes.isEmpty)
+        NovelTocSection(name: '全部章节', entries: [for (final ch in c.chapters) NovelTocEntry(index: ch.index, name: ch.name)]),
+    ];
+    final i = await showIosCatalog(
       context,
-      title: '目录 · ${c.chapters.length} 章',
-      options: [for (final ch in c.chapters) '${ch.name}${ch.index == _index ? '  · 在读' : ''}${_bookmarks.contains(ch.index) ? '  · 书签' : ''}'],
-      selected: _index,
+      sections: sections,
+      currentIndex: _index,
+      title: _title,
+      bookmarkKey: _bookmarkKey,
     );
-    if (i != null && i != _index) _loadChapter(i);
+    if (i != null && i != _index) _goChapter(i);
   }
 
   void _goChapter(int index) {
-    if (_scroll.hasClients) _scroll.jumpTo(0);
     _progress = 0;
+    _page = 1;
+    _pages = 1;
     _loadChapter(index);
+  }
+
+  /// 章节小标题：`第一卷 · 第 3 章`；没有分卷时退化为全书序号。
+  String _chapterLabel(WenkuCatalog c, WenkuChapter ch) {
+    if (ch.volume < c.volumes.length) {
+      final v = c.volumes[ch.volume];
+      final n = v.chapters.indexOf(ch) + 1;
+      return '${v.name} · 第 $n 章';
+    }
+    return '第 ${_index + 1} 章 / 共 ${c.chapters.length} 章';
   }
 
   Future<void> _login() async {
@@ -287,7 +303,7 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
                       child: Row(
                         children: [
                           Expanded(child: _barButton('bookmark', '目录', colors, total == 0 ? null : _toc)),
-                          Text(total == 0 ? '—' : '${_index + 1} / $total', style: TextStyle(fontSize: 15, color: colors.ink)),
+                          NovelPageLabel(page: _page, pages: _pages, color: colors.ink),
                           Expanded(child: _barButton('settings', '阅读设置', colors, () => showNovelAppearance(context))),
                         ],
                       ),
@@ -370,66 +386,74 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
     final content = _content;
     final style = novelBodyStyle(_prefs);
     final ch = c == null ? null : c.chapters[_index];
-    // 正文里的插图按出现顺序取；解析时留了 [插图] 占位，这里换成图片。
-    var imageIndex = 0;
-    final width = MediaQuery.sizeOf(context).width - 56;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => setState(() => _chrome = !_chrome),
-      child: NotificationListener<ScrollEndNotification>(
-        onNotification: (_) {
-          _saveProgress();
-          return false;
-        },
-        child: ListView(
-          controller: _scroll,
-          physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(28, top + 70, 28, bottom + 120),
-          children: [
-            if (ch != null) Text('第 ${_index + 1} 章 / 共 ${c!.chapters.length} 章', style: TextStyle(fontSize: 13, color: colors.muted)),
-            const SizedBox(height: 6),
-            Text(
-              ch?.name ?? _title,
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: colors.ink),
+    final blocks = <Object>[
+      if (content != null) ...novelBlocksOf(content.paragraphs, content.images),
+      if (content != null && c != null) const NovelEndBlock(),
+    ];
+    return NovelBody(
+      key: _bodyKey,
+      contentId: c == null ? '' : '${c.aid}:${c.chapters[_index].cid}',
+      blocks: blocks,
+      style: style,
+      ink: colors.ink,
+      muted: colors.muted,
+      paged: _prefs.novelPaged,
+      // 顶栏和底栏是浮层，正文按「工具条收起」的内边距排版，翻页时字不会跳。
+      padding: EdgeInsets.fromLTRB(28, top + 70, 28, bottom + 96),
+      initialProgress: _progress,
+      onProgress: (p, n, v) {
+        if (p == _page && n == _pages) return;
+        setState(() {
+          _page = p;
+          _pages = n;
+          _progress = v;
+        });
+        // 每翻一页就记位置，退出时不用再补救一次。
+        _saveProgress();
+      },
+      onTapCenter: () => setState(() => _chrome = !_chrome),
+      // 最后一页再往后点就进下一章，第一页往前点回上一章。
+      onTapRight: () {
+        if (c == null || _index >= c.chapters.length - 1) return false;
+        if (_page < _pages) return false;
+        _goChapter(_index + 1);
+        return true;
+      },
+      onTapLeft: () {
+        if (_index <= 0 || _page > 1) return false;
+        _goChapter(_index - 1);
+        return true;
+      },
+      header: ch == null
+          ? null
+          : NovelChapterHeader(
+              // 源站按卷重新编号，用「卷名 · 本章在卷内的序号」比「第 14 章」更不容易和正文标题打架。
+              label: _chapterLabel(c!, ch),
+              title: ch.name,
+              ink: colors.ink,
+              muted: colors.muted,
             ),
-            const SizedBox(height: 22),
-            if (content != null)
-              for (final para in content.paragraphs)
-                if (para == '[插图]' && imageIndex < content.images.length)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 18),
-                    child: Center(
-                      child: _NovelImage(url: content.images[imageIndex++], width: width),
-                    ),
-                  )
-                else
-                  Padding(
-                    padding: EdgeInsets.only(bottom: style.fontSize! * .9),
-                    child: novelParagraph(para, style),
-                  ),
-            const SizedBox(height: 18),
-            if (content != null && c != null) ...[
-              Row(
-                children: [
-                  if (content.previous != null && _index > 0) TextAction(label: '上一章', color: colors.ink, onTap: () => _goChapter(_index - 1)),
-                  const Spacer(),
-                  if (content.next != null && _index < c.chapters.length - 1) TextAction(label: '下一章', color: colors.ink, onTap: () => _goChapter(_index + 1)),
-                ],
-              ),
-              const SizedBox(height: 26),
-              Center(
-                child: WenkuShelfButton(aid: c.aid, name: _title, author: _author),
-              ),
-              if (_index >= c.chapters.length - 1) ...[
-                const SizedBox(height: 14),
-                Center(
-                  child: Text('— 全文完 —', style: TextStyle(fontSize: 13, color: colors.muted)),
+      endCard: content == null || c == null
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    if (content.previous != null && _index > 0) TextAction(label: '上一章', color: colors.ink, onTap: () => _goChapter(_index - 1)),
+                    const Spacer(),
+                    if (content.next != null && _index < c.chapters.length - 1) TextAction(label: '下一章', color: colors.ink, onTap: () => _goChapter(_index + 1)),
+                  ],
                 ),
+                const SizedBox(height: 16),
+                WenkuShelfButton(aid: c.aid, name: _title, author: _author),
+                if (_index >= c.chapters.length - 1) ...[
+                  const SizedBox(height: 10),
+                  Text('— 全文完 —', style: TextStyle(fontSize: 13, color: colors.muted)),
+                ],
               ],
-            ],
-          ],
-        ),
-      ),
+            ),
+      imageBuilder: (url, width) => _NovelImage(url: url, width: width, height: width * kNovelImageRatio),
     );
   }
 
@@ -449,33 +473,30 @@ class _IosWenkuNovelPageState extends State<IosWenkuNovelPage> {
   );
 }
 
-/// 正文插图：按原图比例显示，宽度跟随正文。图床会拦 Dart 默认的 UA（实测 403），
-/// 所以带上和网页一致的浏览器 UA；看过的插图走图片缓存。加载失败时留一行提示，不撑坏排版。
+/// 正文插图：高度由分页器预留的槽位决定，图片按比例居中放进去，不改变分页。
+/// 图床会拦 Dart 默认的 UA（实测 403），所以带上和网页一致的浏览器 UA；看过的插图走图片缓存。
 class _NovelImage extends StatelessWidget {
-  const _NovelImage({required this.url, required this.width});
+  const _NovelImage({required this.url, required this.width, required this.height});
 
   final String url;
   final double width;
+  final double height;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(8),
-    child: CachedNetworkImage(
-      imageUrl: url,
-      httpHeaders: const {'User-Agent': WenkuService.userAgent, 'Referer': '${WenkuService.base}/'},
+    child: SizedBox(
       width: width,
-      fit: BoxFit.fitWidth,
-      memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
-      placeholder: (_, _) => SizedBox(
-        width: width,
-        height: width * 1.4,
-        child: const Center(child: CupertinoActivityIndicator()),
-      ),
-      errorWidget: (_, _, _) => Container(
-        width: width,
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        alignment: Alignment.center,
-        child: Text('插图没能加载', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+      height: height,
+      child: CachedNetworkImage(
+        imageUrl: url,
+        httpHeaders: const {'User-Agent': WenkuService.userAgent, 'Referer': '${WenkuService.base}/'},
+        fit: BoxFit.contain,
+        memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
+        placeholder: (_, _) => const Center(child: CupertinoActivityIndicator()),
+        errorWidget: (_, _, _) => Center(
+          child: Text('插图没能加载', style: TextStyle(fontSize: 13, color: IosColors.muted)),
+        ),
       ),
     ),
   );

@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../core/account.dart';
 import '../core/api.dart';
 import '../core/config.dart';
+import '../core/routes.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
 import '../ui/motion.dart';
@@ -15,6 +16,7 @@ import '../ui/format.dart' show formatBytes;
 import 'ios_account.dart';
 import 'ios_app.dart';
 import 'ios_settings.dart';
+import 'ios_source.dart';
 import 'ios_theme.dart';
 
 /// 修改网络代理。默认「跟随系统」：系统 VPN 类代理会自动生效；需要 HTTP 代理时再填 host:port。
@@ -169,7 +171,7 @@ class _IosMinePageState extends State<IosMinePage> {
           IosRow(
             icon: 'globe',
             title: '数据源',
-            subtitle: Uri.parse(MangaApi.instance.activeHost).host,
+            subtitle: '${RouteSelector.instance.activeRouteName} · ${MangaApi.instance.activeHost}',
             valueWidget: _pinging
                 ? const CupertinoActivityIndicator()
                 : Row(mainAxisSize: MainAxisSize.min, children: [
@@ -179,7 +181,7 @@ class _IosMinePageState extends State<IosMinePage> {
                     ],
                     Text(_ping ?? '点按测试', style: TextStyle(fontSize: 15, color: _ping != null && !_pingOk ? IosColors.accent : IosColors.muted)),
                   ]),
-            onTap: _pinging ? null : _testSource,
+            onTap: () => _open(const IosSourcePage()),
           ),
           IosRow(icon: 'route', title: '网络代理', value: _prefs.proxy.isEmpty ? '跟随系统' : _prefs.proxy, onTap: () => iosEditProxy(context)),
         ]),
@@ -212,6 +214,13 @@ class _IosMinePageState extends State<IosMinePage> {
                     style: TextStyle(fontSize: 15, color: _update?.status == UpdateStatus.available || _update?.status == UpdateStatus.failed ? IosColors.accent : IosColors.muted),
                   ),
             onTap: _checking ? null : _checkUpdate,
+          ),
+          IosRow(
+            title: '启动时自动检查',
+            subtitle: '每次打开应用检查一次，可随时关闭',
+            chevron: false,
+            valueWidget: CupertinoSwitch(value: _prefs.autoUpdate, activeTrackColor: IosColors.accent, onChanged: (v) => setState(() => _prefs.autoUpdate = v)),
+            onTap: () => setState(() => _prefs.autoUpdate = !_prefs.autoUpdate),
           ),
           IosRow(icon: 'github', title: '项目主页', subtitle: AppConfig.githubPage.replaceFirst('https://', ''), onTap: () => launchUrl(Uri.parse(AppConfig.githubPage), mode: LaunchMode.externalApplication)),
         ]),

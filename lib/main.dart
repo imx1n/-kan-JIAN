@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/account.dart';
+import 'core/api.dart';
 import 'core/store.dart';
 import 'core/wenku.dart';
 import 'core/wenku_web.dart';
@@ -29,6 +30,8 @@ Future<void> main() async {
   WenkuService.web = WenkuWebFetcher.instance;
   final proxy = ReaderPrefs.instance.proxy;
   if (proxy.isNotEmpty) HttpOverrides.global = _ProxyOverrides(proxy);
+  // 先发出测速请求，不阻塞首帧；请求会等它算完再挑线路。
+  MangaApi.instance.warmUp().ignore();
   // 界面按竖屏手机设计；内容画到系统栏后面，悬浮标签栏自己避让手势条。
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

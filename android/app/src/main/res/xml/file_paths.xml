@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 应用内下载的安装包放在缓存目录，安装器需要能读到这里 -->
+    <cache-path name="updates" path="." />
+    <external-cache-path name="external_updates" path="." />
+</paths>
