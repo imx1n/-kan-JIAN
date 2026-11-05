@@ -1,8 +1,7 @@
-import 'dart:ui' show ImageFilter;
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../core/store.dart';
 import '../ui/icons.dart';
@@ -103,7 +102,14 @@ class GlassScope extends InheritedNotifier<ValueNotifier<bool>> {
   }
 }
 
-/// 玻璃材质：模糊 + 半透明 + 细亮边 + 克制阴影。只用于导航、工具和暂态面板，内容层保持实底。
+/// 玻璃材质：Liquid Glass（着色器折射）＋ 减少透明度时退回实底。
+///
+/// 只用于导航、工具和暂态面板，内容层保持实底。全 App 的玻璃都走这一个组件
+/// （标签栏、浮动按钮、底部面板、阅读工具条），所以换材质只需要改这里。
+///
+/// 用 `liquid_glass_widgets` 的 [AdaptiveGlass]：iOS 走 Impeller 着色器（折射、
+/// 边缘高光、色散），Android 走它的轻量路径，观感一致。系统开启「降低透明度」
+/// 或「增加对比度」时，库会自动退回毛玻璃；我们再额外提供实底，避免文字糊掉。
 class Glass extends StatelessWidget {
   const Glass({super.key, required this.child, this.radius = 22, this.dark = false, this.padding, this.shadow = true});
 
@@ -116,27 +122,45 @@ class Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduce = GlassScope.reduced(context);
-    final r = BorderRadius.circular(radius);
     final dark = this.dark || IosColors.isDark;
-    final fill = dark
-        ? (reduce ? IosColors.dSurface : const Color(0xAD292A31))
-        : (reduce ? const Color(0xFFF2F2F6) : const Color(0xB0F8F8FB));
-    Widget body = Container(
-      padding: padding,
-      decoration: BoxDecoration(
-        color: fill,
-        borderRadius: r,
-        border: Border.all(color: dark ? const Color(0x2EFFFFFF) : const Color(0x8CFFFFFF), width: .8),
+    final r = BorderRadius.circular(radius);
+    final content = padding == null ? child : Padding(padding: padding!, child: child);
+
+    // 减少透明度：不参与折射，直接用实底，和 iOS「降低透明度」的行为一致。
+    if (reduce) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: r,
+          boxShadow: shadow ? [BoxShadow(color: dark ? const Color(0x59000000) : const Color(0x1F1A1A28), blurRadius: 18, offset: const Offset(0, 6))] : null,
+        ),
+        child: ClipRRect(
+          borderRadius: r,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: dark ? IosColors.dSurface : const Color(0xFFF2F2F6),
+              borderRadius: r,
+              border: Border.all(color: dark ? const Color(0x2EFFFFFF) : const Color(0x8CFFFFFF), width: .8),
+            ),
+            child: content,
+          ),
+        ),
+      );
+    }
+
+    return AdaptiveGlass(
+      shape: LiquidRoundedSuperellipse(borderRadius: radius),
+      settings: LiquidGlassSettings(
+        blur: 12,
+        thickness: 24,
+        // 深色下用暗色染色，浅色下用极淡的白色，保留折射的同时压住背景杂色。
+        glassColor: dark ? const Color(0x38292A31) : const Color(0x40F8F8FB),
+        lightIntensity: .5,
+        refractiveIndex: 1.2,
+        chromaticAberration: .01,
+        saturation: 1.5,
+        shadowElevation: shadow ? 1.0 : 0.0,
       ),
-      child: child,
-    );
-    if (!reduce) body = BackdropFilter(filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22), child: body);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: r,
-        boxShadow: shadow ? [BoxShadow(color: dark ? const Color(0x59000000) : const Color(0x1F1A1A28), blurRadius: 18, offset: const Offset(0, 6))] : null,
-      ),
-      child: ClipRRect(borderRadius: r, child: body),
+      child: content,
     );
   }
 }

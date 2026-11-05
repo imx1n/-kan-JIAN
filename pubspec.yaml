@@ -46,6 +46,7 @@ dependencies:
   webview_flutter: ^4.14.1
   webview_flutter_android: ^4.14.1
   webview_flutter_wkwebview: ^3.27.2
+  liquid_glass_widgets: ^1.16.1
 
 dev_dependencies:
   flutter_test:

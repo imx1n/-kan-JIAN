@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/account.dart';
 import 'core/api.dart';
@@ -35,5 +36,7 @@ Future<void> main() async {
   // 界面按竖屏手机设计；内容画到系统栏后面，悬浮标签栏自己避让手势条。
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // 预热 Liquid Glass 着色器：只做磁盘到内存的读取，不阻塞首帧。
+  await LiquidGlassWidgets.initialize();
   runApp(const IosApp());
 }

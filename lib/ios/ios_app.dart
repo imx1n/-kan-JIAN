@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/account.dart';
@@ -83,13 +84,17 @@ class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       // 根部挂一个 1×1 的隐藏 WebView：轻小说源站拦下 HTTP 客户端时用它取页面。
-      builder: (context, child) => GlassScope(
-        reduce: GlassScope.reduce,
-        child: Stack(
-          children: [
-            child!,
-            Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host()),
-          ],
+      // 外面再包一层 Liquid Glass：让玻璃组件能读到 MaterialApp 的明暗模式。
+      builder: (context, child) => LiquidGlassWidgets.wrap(
+        brightnessResolver: Theme.maybeBrightnessOf,
+        child: GlassScope(
+          reduce: GlassScope.reduce,
+          child: Stack(
+            children: [
+              child!,
+              Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host()),
+            ],
+          ),
         ),
       ),
       home: const IosShell(),

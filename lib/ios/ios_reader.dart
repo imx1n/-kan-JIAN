@@ -640,10 +640,11 @@ class _IosReaderPageState extends State<IosReaderPage> {
     ),
   );
 
-  void _showSettings() => showAppSheet<void>(context, (_) => const _ReadingSettingsSheet());
+  void _showSettings() => showAppSheet<void>(context, (_) => const _ReadingSettingsSheet(), scrim: kSheetScrimReader);
 
   void _showCatalog(ChapterContent c) => showAppSheet<void>(
     context,
+    scrim: kSheetScrimReader,
     (sheet) => _CatalogSheet(
       comic: widget.comic,
       group: c.chapter.groupPathWord.isEmpty ? widget.group : c.chapter.groupPathWord,
