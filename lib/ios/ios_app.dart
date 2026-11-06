@@ -287,126 +287,56 @@ class _TabDock extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
     return Positioned(
-      left: 18,
-      right: 18,
+      left: 0,
+      right: 0,
       bottom: bottom > 0 ? bottom - 6 : 16,
-      height: 64,
       child: ListenableBuilder(
         listenable: LibraryStore.instance,
         builder: (context, _) {
           final hasUpdate = LibraryStore.instance.entries.any((e) => e.hasUpdate);
-          // 图标的高亮也跟着连续位置走：拖到一半时下一个标签就已经亮起来，
-          // 和原生一致；用 round() 让它在过半时切换。
-          return ValueListenableBuilder<double>(
-            valueListenable: IosShell.pagePos,
-            builder: (context, pos, _) {
-              final active = pos.round().clamp(0, _items.length - 1);
-              return _dock(context, active, hasUpdate);
+          return GlassTabBar.bottom(
+            tabs: [
+              for (var i = 0; i < _items.length; i++)
+                GlassTab(
+                  // 图标和文字的颜色由库里按选中状态套 IconTheme / 文字样式，
+                  // 所以 AppIcon 不传颜色（它默认取 IconTheme）。
+                  icon: AppIcon(_items[i].$1, size: 23, stroke: 1.7),
+                  activeIcon: AppIcon(_items[i].$2, size: 23, stroke: 1.7),
+                  label: _items[i].$3,
+                  semanticLabel: i == 0 && hasUpdate && index != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
+                ),
+            ],
+            selectedIndex: index,
+            onTabSelected: (i) {
+              if (IosShell.tab.value != i) IosShell.tab.value = i;
             },
+            extraButton: GlassTabBarExtraButton(
+              icon: AppIcon('search', size: 25, stroke: 1.8),
+              label: '搜索',
+              onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+            ),
+            // 与我们原来的尺寸对齐：左右各 18，高度 64，标签栏和搜索按钮同一条玻璃。
+            horizontalPadding: 18,
+            verticalPadding: 0,
+            spacing: 12,
+            barHeight: 64,
+            barBorderRadius: 32,
+            iconSize: 23,
+            labelFontSize: 11,
+            selectedIconColor: IosColors.accent,
+            unselectedIconColor: IosColors.tab,
+            selectedLabelColor: IosColors.accent,
+            unselectedLabelColor: IosColors.tab,
+            indicatorColor: const Color(0x1A747070),
+            indicatorPinchStrength: .4,
+            quality: GlassQuality.premium,
           );
         },
       ),
     );
   }
-
-  Widget _dock(BuildContext context, int index, bool hasUpdate) {
-    return Row(
-            children: [
-              Expanded(
-                child: Glass(
-                  radius: 32,
-                  padding: const EdgeInsets.all(5),
-                  child: LayoutBuilder(
-                    builder: (context, c) {
-                      final w = c.maxWidth / 3;
-                      return Stack(
-                        children: [
-                          // 跟着手指连续移动：拖拽时用 pagePos 的原值，点按跳转时 Positioned
-                          // 没有动画，所以这里自己补一段 260ms 的补间，避免瞬移。
-                          ValueListenableBuilder<double>(
-                            valueListenable: IosShell.pagePos,
-                            builder: (context, pos, _) => AnimatedPositioned(
-                              duration: Motion.of(context, 260),
-                              curve: Motion.ease,
-                              left: w * pos.clamp(0, _items.length - 1).toDouble(),
-                              top: 0,
-                              bottom: 0,
-                              width: w,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
-                              ),
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              for (var i = 0; i < _items.length; i++)
-                                Expanded(
-                                  child: Pressable(
-                                    haptic: true,
-                                    pressedScale: .96,
-                                    semanticLabel: i == 0 && hasUpdate && index != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
-                                    onTap: () => IosShell.tab.value = i,
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Stack(
-                                          clipBehavior: Clip.none,
-                                          children: [
-                                            AppIcon(i == index ? _items[i].$2 : _items[i].$1, size: 23, color: i == index ? IosColors.accent : IosColors.tab, stroke: 1.7),
-                                            if (i == 0 && hasUpdate && index != 0)
-                                              Positioned(
-                                                top: -1,
-                                                right: -3,
-                                                child: Container(
-                                                  width: 8,
-                                                  height: 8,
-                                                  decoration: BoxDecoration(
-                                                    color: IosColors.accent,
-                                                    shape: BoxShape.circle,
-                                                    border: Border.all(color: IosColors.surface, width: 1.5),
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          _items[i].$3,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            height: 14 / 11,
-                                            color: i == index ? IosColors.accent : IosColors.tab,
-                                            fontWeight: i == index ? FontWeight.w600 : FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Pressable(
-                semanticLabel: '搜索',
-                onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
-                child: Glass(
-                  radius: 32,
-                  child: SizedBox.square(
-                    dimension: 64,
-                    child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
-                  ),
-                ),
-              ),
-            ],
-          );
-  }
 }
+
 
 /* ───────── 导航 ───────── */
 
