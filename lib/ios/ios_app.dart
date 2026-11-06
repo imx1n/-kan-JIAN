@@ -107,6 +107,9 @@ class IosShell extends StatefulWidget {
 
   static final tab = ValueNotifier<int>(0);
 
+  /// 当前页的连续位置（0.0 ~ 2.0），拖拽过程中随手指变化，标签栏选中框据此跟手移动。
+  static final pagePos = ValueNotifier<double>(0);
+
   /// 测试里关掉启动时的更新检查。
   static bool autoUpdateCheck = true;
 
@@ -194,6 +197,13 @@ class _TabStackState extends State<_TabStack> {
   bool _dragging = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 重建（热重启、测试里换树）时把选中框位置对齐到起始页，不受上次遗留的值影响。
+    IosShell.pagePos.value = widget.index.toDouble();
+  }
+
+  @override
   void didUpdateWidget(_TabStack old) {
     super.didUpdateWidget(old);
     if (!_pages.hasClients) return;
@@ -221,6 +231,9 @@ class _TabStackState extends State<_TabStack> {
       } else if (n is ScrollEndNotification) {
         _dragging = false;
       }
+      // 标签栏的选中框跟着页面连续移动（原生就是这样，不是翻完才跳一格）。
+      final p = _pages.hasClients ? _pages.page : null;
+      if (p != null && IosShell.pagePos.value != p) IosShell.pagePos.value = p;
       return false;
     },
     child: PageView(
@@ -282,7 +295,22 @@ class _TabDock extends StatelessWidget {
         listenable: LibraryStore.instance,
         builder: (context, _) {
           final hasUpdate = LibraryStore.instance.entries.any((e) => e.hasUpdate);
-          return Row(
+          // 图标的高亮也跟着连续位置走：拖到一半时下一个标签就已经亮起来，
+          // 和原生一致；用 round() 让它在过半时切换。
+          return ValueListenableBuilder<double>(
+            valueListenable: IosShell.pagePos,
+            builder: (context, pos, _) {
+              final active = pos.round().clamp(0, _items.length - 1);
+              return _dock(context, active, hasUpdate);
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _dock(BuildContext context, int index, bool hasUpdate) {
+    return Row(
             children: [
               Expanded(
                 child: Glass(
@@ -293,15 +321,20 @@ class _TabDock extends StatelessWidget {
                       final w = c.maxWidth / 3;
                       return Stack(
                         children: [
-                          AnimatedPositioned(
-                            duration: Motion.of(context, 260),
-                            curve: Motion.ease,
-                            left: w * index,
-                            top: 0,
-                            bottom: 0,
-                            width: w,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                          // 跟着手指连续移动：拖拽时用 pagePos 的原值，点按跳转时 Positioned
+                          // 没有动画，所以这里自己补一段 260ms 的补间，避免瞬移。
+                          ValueListenableBuilder<double>(
+                            valueListenable: IosShell.pagePos,
+                            builder: (context, pos, _) => AnimatedPositioned(
+                              duration: Motion.of(context, 260),
+                              curve: Motion.ease,
+                              left: w * pos.clamp(0, _items.length - 1).toDouble(),
+                              top: 0,
+                              bottom: 0,
+                              width: w,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                              ),
                             ),
                           ),
                           Row(
@@ -372,9 +405,6 @@ class _TabDock extends StatelessWidget {
               ),
             ],
           );
-        },
-      ),
-    );
   }
 }
 
