@@ -80,7 +80,7 @@ void main() {
     await pump(tester, const IosShelfPage());
 
     expect(find.text('最近在读'), findsOneWidget);
-    expect(find.text('第245话  第 3 / 16 页'), findsOneWidget);
+    expect(find.text('第245话 · 3 / 16 页'), findsOneWidget);
     expect(find.text('新 2 话'), findsOneWidget);
     expect(find.text('我的藏书'), findsOneWidget);
 

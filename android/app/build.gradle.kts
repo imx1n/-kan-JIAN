@@ -46,6 +46,11 @@ android {
         release {
             signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
         }
+        // 调试包也用正式钥匙：模拟器 / 真机上装着的通常是 release 包，
+        // 签名不一致会导致覆盖安装失败，要装 debug 就得先卸载并丢本地书架。
+        debug {
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+        }
     }
 }
 

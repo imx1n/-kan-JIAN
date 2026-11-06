@@ -144,7 +144,10 @@ class _IosShelfPageState extends State<IosShelfPage> {
                   crossAxisCount: 3,
                   crossAxisSpacing: 14,
                   mainAxisSpacing: 18,
-                  mainAxisExtent: (MediaQuery.sizeOf(context).width - 40 - 28) / 3 * 4 / 3 + 8 + 42 + 18,
+                  // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
+                  // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
+                  mainAxisExtent:
+                      (MediaQuery.sizeOf(context).width - 40 - 28) / 3 * 4 / 3 + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
                 ),
                 itemCount: visible.length,
                 itemBuilder: (context, i) => _Tile(entry: visible[i], onLongPress: () => _entryMenu(visible[i])),
@@ -157,55 +160,85 @@ class _IosShelfPageState extends State<IosShelfPage> {
   }
 }
 
+/// 最近在读：一条轻量续读入口，不抢藏书的层级。
+///
+/// 封面按藏书系列的语法收小到 74×103，进度条挪回封面下沿，
+/// 「继续阅读」从悬浮胶囊改成行内文字——整块高度比原来少约 70。
 class _Resume extends StatelessWidget {
   const _Resume({required this.entry});
 
   final ShelfEntry entry;
 
+  static const _coverW = 74.0;
+  static const _coverH = _coverW * 417 / 299;
+
   @override
   Widget build(BuildContext context) {
     final e = entry;
-    final where = e.kind == ShelfKind.manga && e.pageCount > 0 ? '${e.chapterName}  第 ${e.page + 1} / ${e.pageCount} 页' : e.chapterName ?? '';
+    final where = e.kind == ShelfKind.manga && e.pageCount > 0 ? '${e.chapterName} · ${e.page + 1} / ${e.pageCount} 页' : (e.chapterName ?? '');
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Pressable(
           onTap: () => e.kind == ShelfKind.manga ? iosOpenDetail(context, briefOfEntry(e)) : iosContinue(context, e),
           child: DecoratedBox(
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: const [BoxShadow(color: Color(0x2E1A1A28), blurRadius: 12, offset: Offset(0, 5))]),
-            child: CoverImage(url: e.cover, title: e.name, width: 100, height: 140, radius: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              boxShadow: const [BoxShadow(color: Color(0x14202124), blurRadius: 9, offset: Offset(0, 3))],
+            ),
+            child: SizedBox(
+              width: _coverW,
+              height: _coverH,
+              child: Stack(children: [
+                CoverImage(url: e.cover, title: e.name, width: _coverW, height: _coverH, radius: 6),
+                // 内描边：浅色封面不至于和页面底色糊在一起。
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0x08222222), width: 1))),
+                  ),
+                ),
+                // 进度贴封面下沿：和藏书封面的语法一致，不再单拉一条长进度条。
+                Positioned(
+                  left: 6,
+                  right: 6,
+                  bottom: 6,
+                  height: 2,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: Stack(children: [
+                      const Positioned.fill(child: ColoredBox(color: Color(0xB3F7F7FA))),
+                      FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: e.progress.clamp(0.0, 1.0),
+                        child: ColoredBox(color: IosColors.accent),
+                      ),
+                    ]),
+                  ),
+                ),
+              ]),
+            ),
           ),
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 16),
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const SizedBox(height: 2),
-            Text('最近在读', style: TextStyle(fontSize: 13, color: IosColors.muted)),
-            const SizedBox(height: 4),
-            Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 24, height: 1.25, fontWeight: FontWeight.w700, color: IosColors.ink)),
-            const SizedBox(height: 6),
-            Text(where, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, color: IosColors.muted)),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(value: e.progress.clamp(0, 1), minHeight: 3, color: IosColors.accent, backgroundColor: IosColors.faint),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text('${(e.progress * 100).round()}%', style: TextStyle(fontSize: 13, color: IosColors.muted)),
-            ]),
-            const SizedBox(height: 12),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('最近在读', style: TextStyle(fontSize: 12, height: 18 / 12, color: IosColors.muted)),
+            const SizedBox(height: 3),
+            Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 19, height: 27 / 19, fontWeight: FontWeight.w600, letterSpacing: .1, color: IosColors.ink)),
+            const SizedBox(height: 3),
+            Text(where, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, height: 20 / 13, color: IosColors.muted, fontFeatures: const [FontFeature.tabularFigures()])),
             Pressable(
               onTap: () => iosContinue(context, e),
-              child: Glass(
-                radius: 22,
-                padding: EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 32),
+                margin: const EdgeInsets.only(top: 4),
+                alignment: Alignment.centerLeft,
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text('继续阅读', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink)),
-                  SizedBox(width: 10),
-                  AppIcon('arrow', size: 18, color: IosColors.accent, stroke: 1.9),
+                  Text('继续阅读', style: TextStyle(fontSize: 13, height: 20 / 13, fontWeight: FontWeight.w600, color: IosColors.accent)),
+                  const SizedBox(width: 7),
+                  AppIcon('arrow', size: 16, color: IosColors.accent, stroke: 1.7),
                 ]),
               ),
             ),
@@ -259,6 +292,24 @@ class _Tile extends StatelessWidget {
   final ShelfEntry entry;
   final VoidCallback onLongPress;
 
+  // 封面以下那三行动作的高度必须可算。行高一律写死，不能交给字体度量——
+  // 各家 ROM 的默认字体 ascent+descent 不一样，差出来的零点几像素
+  // 会被 SliverGrid 报成「BOTTOM OVERFLOWED BY 1.00 PIXELS」。
+  static const _gapAfterCover = 8.0;
+  static const _nameSize = 15.0;
+  static const _nameLines = 2;
+  static const _nameLine = 1.3;
+  static const _gapNameMeta = 2.0;
+  static const _metaSize = 13.0;
+  static const _metaLine = 1.45;
+
+  /// 封面下方（封面底边到格子底边）需要的高度，网格的 `mainAxisExtent` 直接用它。
+  static double spaceBelowCover(TextScaler scaler) =>
+      _gapAfterCover +
+      scaler.scale(_nameSize) * _nameLine * _nameLines +
+      _gapNameMeta +
+      scaler.scale(_metaSize) * _metaLine;
+
   @override
   Widget build(BuildContext context) {
     final e = entry;
@@ -267,8 +318,11 @@ class _Tile extends StatelessWidget {
       onTap: () => e.kind == ShelfKind.manga ? iosOpenDetail(context, briefOfEntry(e)) : iosContinue(context, e),
       onLongPress: onLongPress,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        AspectRatio(
-          aspectRatio: 3 / 4,
+        // 封面吃掉「格子高度 − 文字块」，而不是自己按 3:4 定高。
+        // 原来用 AspectRatio 让封面按宽度算高，网格的 mainAxisExtent 又另算一份，
+        // 两边差零点几像素就报溢出；这样封面永远是那个余量，结构上不可能溢出，
+        // 比例也只差千分之几。
+        Expanded(
           child: LayoutBuilder(
             builder: (context, c) => Stack(children: [
               DecoratedBox(
@@ -298,10 +352,10 @@ class _Tile extends StatelessWidget {
             ]),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, height: 1.3, color: IosColors.ink)),
-        const SizedBox(height: 2),
-        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, color: IosColors.muted)),
+        SizedBox(height: _gapAfterCover),
+        Text(e.name, maxLines: _nameLines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _nameSize, height: _nameLine, color: IosColors.ink)),
+        const SizedBox(height: _gapNameMeta),
+        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _metaSize, height: _metaLine, color: IosColors.muted)),
       ]),
     );
   }

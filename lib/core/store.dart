@@ -428,30 +428,32 @@ class ReaderPrefs extends ChangeNotifier {
   double get fontSize => _get('fontSize');
   set fontSize(double v) => _set('fontSize', v);
   /// 漫画阅读模式：
-  /// 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，4 条漫。
+  /// 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，
+  /// 4 条漫·无缝，5 条漫·留白。
   ///
   /// 划分参考 PasteMangaX（`ComicCategories.READER_MODE_*`）：它把「单页」按横/纵、
   /// 正/反拆成四种，交互差异全部由手势分区和目标位置算出来，代码里只有一套翻页逻辑。
   int get mangaMode => _get('mangaMode');
-  set mangaMode(int v) => _set('mangaMode', v.clamp(0, 4));
+  set mangaMode(int v) => _set('mangaMode', v.clamp(0, 5));
 
-  /// 是否条漫（连续纵向滚动）。
-  bool get mangaScroll => mangaMode == 4;
-  set mangaScroll(bool v) => mangaMode = v ? 4 : 0;
+  /// 是否条漫（连续纵向滚动）。4 无缝、5 留白都是条漫。
+  bool get mangaScroll => mangaMode >= 4;
+  // 已经是条漫时保持原来的 4/5，不要在切换别的开关时把它打回 4。
+  set mangaScroll(bool v) => mangaMode = v ? (mangaScroll ? mangaMode : 4) : 0;
 
   /// 是否从右向左翻（日漫顺序）。仅对横向模式有意义。
   bool get mangaRtl => mangaMode == 1 || mangaMode == 3;
-  set mangaRtl(bool v) => mangaMode = v ? (mangaScroll ? 4 : 1) : (mangaScroll ? 4 : 0);
+  set mangaRtl(bool v) => mangaMode = v ? (mangaScroll ? mangaMode : 1) : (mangaScroll ? mangaMode : 0);
 
-  /// 竖向翻页（上下翻，不是左右）。
-  bool get mangaVertical => mangaMode == 2 || mangaMode == 3;
+  /// 竖向翻页（上下翻，不是左右）。条漫也是竖向阅读。
+  bool get mangaVertical => mangaMode == 2 || mangaMode == 3 || mangaMode >= 4;
 
   /// 翻页方向反过来：从下向上 / 从右向左。
   bool get mangaReversed => mangaMode == 1 || mangaMode == 3;
 
-  /// 手势分区：0 关闭，1 自适应，2 左右三分，3 L 形。
+  /// 手势分区：0 关闭，1 自适应，2 左右三分，3 L 形，4 边缘，5 Kindle 式。
   int get mangaArea => _get('mangaArea');
-  set mangaArea(int v) => _set('mangaArea', v.clamp(0, 3));
+  set mangaArea(int v) => _set('mangaArea', v.clamp(0, 5));
 
   /// 首次进入阅读器时是否已经展示过手势分区提示。
   bool get mangaTipSeen => _get('mangaTipSeen');
