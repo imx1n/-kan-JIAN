@@ -107,17 +107,26 @@ class GlassScope extends InheritedNotifier<ValueNotifier<bool>> {
 /// 只用于导航、工具和暂态面板，内容层保持实底。全 App 的玻璃都走这一个组件
 /// （标签栏、浮动按钮、底部面板、阅读工具条），所以换材质只需要改这里。
 ///
-/// 用 `liquid_glass_widgets` 的 [AdaptiveGlass]：iOS 走 Impeller 着色器（折射、
-/// 边缘高光、色散），Android 走它的轻量路径，观感一致。系统开启「降低透明度」
-/// 或「增加对比度」时，库会自动退回毛玻璃；我们再额外提供实底，避免文字糊掉。
+/// 用 `liquid_glass_widgets` 的 [AdaptiveGlass]，但**必须显式选 `premium` 档**：
+/// 它的默认值是 `standard`，走的是 2D 轻量着色器，只有模糊和高光，没有真正的
+/// 折射、色散和背景采样——看上去和普通毛玻璃没区别。`premium` 才走 Impeller
+/// 的完整管线（`toImageSync` 抓背景 + 逐像素折射）。代价是每帧一次纹理抓取，
+/// 所以只在静态浮层上用；列表项里的玻璃用 [GlassQuality.standard]。
+///
+/// 系统开启「降低透明度」或「增加对比度」时，库会自动退回毛玻璃；我们再额外
+/// 提供实底，避免文字糊掉。
 class Glass extends StatelessWidget {
-  const Glass({super.key, required this.child, this.radius = 22, this.dark = false, this.padding, this.shadow = true});
+  const Glass({super.key, required this.child, this.radius = 22, this.dark = false, this.padding, this.shadow = true, this.quality = GlassQuality.premium});
 
   final Widget child;
   final double radius;
   final bool dark;
   final EdgeInsetsGeometry? padding;
   final bool shadow;
+
+  /// 渲染档位。[GlassQuality.premium] 有折射；[GlassQuality.standard] 只有模糊，
+  /// 用在会跟着列表滚动的玻璃上（每帧抓背景纹理代价太高）。
+  final GlassQuality quality;
 
   @override
   Widget build(BuildContext context) {
@@ -148,15 +157,19 @@ class Glass extends StatelessWidget {
     }
 
     return AdaptiveGlass(
+      quality: quality,
       shape: LiquidRoundedSuperellipse(borderRadius: radius),
+      // 这组数值是给 premium 档调的：premium 直接用原值（只有 standard 档会做归一化
+      // 把 thickness 乘 0.4、lightIntensity 乘 0.6），所以光和色散要按 3D 着色的量级给。
+      // 之前那组 .5 / .01 是按 2D 档试的，放到 premium 下折射几乎看不出来。
       settings: LiquidGlassSettings(
-        blur: 12,
-        thickness: 24,
+        blur: 10,
+        thickness: 26,
         // 深色下用暗色染色，浅色下用极淡的白色，保留折射的同时压住背景杂色。
         glassColor: dark ? const Color(0x38292A31) : const Color(0x40F8F8FB),
-        lightIntensity: .5,
+        lightIntensity: 1.5,
         refractiveIndex: 1.2,
-        chromaticAberration: .01,
+        chromaticAberration: .12,
         saturation: 1.5,
         shadowElevation: shadow ? 1.0 : 0.0,
       ),

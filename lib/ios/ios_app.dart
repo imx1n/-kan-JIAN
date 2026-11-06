@@ -170,8 +170,11 @@ class _IosShellState extends State<IosShell> {
   );
 }
 
-/// 三个标签页常驻（保留各自的滚动位置），切换时 fade-through：旧页在前 30% 时间里淡出，
-/// 新页在后 70% 淡入，两页不叠在一起；总时长 220ms，不横移。
+/// 三个标签页常驻（保留各自的滚动位置），可左右拖拽切换：跟 iOS 原生分页一样，
+/// 拖到一半松手会吸附到最近的一页，首尾有回弹。
+///
+/// 点标签栏也走同一个 [PageController]，所以点按和拖拽共用一套位置状态，
+/// 不会出现「点完又滑回去」的错位。
 class _TabStack extends StatefulWidget {
   const _TabStack({required this.index, required this.children});
 
@@ -182,66 +185,82 @@ class _TabStack extends StatefulWidget {
   State<_TabStack> createState() => _TabStackState();
 }
 
-class _TabStackState extends State<_TabStack> with SingleTickerProviderStateMixin {
-  late int _current = widget.index;
-  int? _previous;
-  late final _c = AnimationController(vsync: this, value: 1);
+class _TabStackState extends State<_TabStack> {
+  late final _pages = PageController(initialPage: widget.index);
+
+  /// 用户是否正用手指拖拽。只有拖拽产生的翻页才写回 [IosShell.tab]；
+  /// 程序自己 animateToPage 时不能写回，否则会盖掉外部刚写入的值
+  /// （例如返回键把标签设为 0、但上一段动画还没结束）。
+  bool _dragging = false;
 
   @override
   void didUpdateWidget(_TabStack old) {
     super.didUpdateWidget(old);
-    if (widget.index == _current) return;
-    _previous = _current;
-    _current = widget.index;
-    final d = Motion.of(context, 220);
+    if (!_pages.hasClients) return;
+    // 已经停在这一页（例如拖拽结束刚写回的同一个值），不用再动。
+    if ((_pages.page ?? widget.index.toDouble()).round() == widget.index) return;
+    final d = Motion.of(context, 320);
     if (d == Duration.zero) {
-      _previous = null;
-      _c.value = 1;
-      return;
+      _pages.jumpToPage(widget.index);
+    } else {
+      _pages.animateToPage(widget.index, duration: d, curve: Motion.ease);
     }
-    _c
-      ..duration = d
-      ..forward(from: 0).whenCompleteOrCancel(() {
-        if (mounted) setState(() => _previous = null);
-      });
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _pages.dispose();
     super.dispose();
   }
 
-  static const _out = Interval(0, .3, curve: Motion.exit);
-  static const _inCurve = Interval(.3, 1, curve: Motion.ease);
-
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: _c,
-    builder: (context, _) => Stack(
-      fit: StackFit.expand,
+  Widget build(BuildContext context) => NotificationListener<ScrollNotification>(
+    onNotification: (n) {
+      if (n is ScrollStartNotification) {
+        _dragging = n.dragDetails != null;
+      } else if (n is ScrollEndNotification) {
+        _dragging = false;
+      }
+      return false;
+    },
+    child: PageView(
+      controller: _pages,
+      // 预构建相邻的一页：标签切换时内容已经在加载，不用等滑过去才转圈；
+      // 读屏软件按页推进也依赖这个。
+      allowImplicitScrolling: true,
+      // 首尾回弹，和 iOS 的 UIScrollView 一致；Android 上也照样用，界面本来就是 iOS 风。
+      physics: const PageScrollPhysics().applyTo(const BouncingScrollPhysics()),
+      onPageChanged: (i) {
+        if (!_dragging) return;
+        if (IosShell.tab.value != i) IosShell.tab.value = i;
+      },
       children: [
-        for (var i = 0; i < widget.children.length; i++)
-          Offstage(
-            offstage: i != _current && i != _previous,
-            child: TickerMode(
-              enabled: i == _current,
-              child: IgnorePointer(
-                ignoring: i != _current,
-                child: Opacity(
-                  opacity: !_c.isAnimating
-                      ? 1
-                      : i == _current
-                      ? _inCurve.transform(_c.value)
-                      : 1 - _out.transform(_c.value),
-                  child: widget.children[i],
-                ),
-              ),
-            ),
-          ),
+        for (final child in widget.children)
+          // 离开屏幕也保活，滚动位置和已加载的数据不会因为滑走而丢。
+          _KeepAlive(child: child),
       ],
     ),
   );
+}
+
+class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAlive> createState() => _KeepAliveState();
+}
+
+class _KeepAliveState extends State<_KeepAlive> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
 }
 
 class _TabDock extends StatelessWidget {
