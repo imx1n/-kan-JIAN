@@ -156,9 +156,12 @@ class _PhonePreview extends StatelessWidget {
   }
 }
 
-/// 阅读设置：漫画阅读方式、翻页方向、画质；轻小说纸张与排版。
+/// 阅读设置：漫画阅读方式、翻页方向、手势分区、画质；轻小说纸张与排版。
 class IosReadingSettingsPage extends StatelessWidget {
   const IosReadingSettingsPage({super.key});
+
+  static const _modeNames = ['单页 · 从左向右', '单页 · 从右向左', '单页 · 从上向下', '单页 · 从下向上', '条漫'];
+  static const _areaNames = ['关闭', '自适应', '左右三分', 'L 形'];
 
   @override
   Widget build(BuildContext context) {
@@ -167,13 +170,21 @@ class IosReadingSettingsPage extends StatelessWidget {
       InsetGroup(title: '漫画', footer: '画质更改将在下次载入图片时应用。阅读器里也可以随时切换。', children: [
         IosRow(
           title: '阅读方式',
-          value: p.mangaScroll ? '条漫' : '单页',
-          onTap: () => _pick(context, '阅读方式', const ['单页', '条漫'], p.mangaScroll ? 1 : 0, (i) => p.mangaScroll = i == 1),
+          subtitle: '条漫是连续上下滚动；单页可横向或纵向翻',
+          value: _modeNames[p.mangaMode],
+          onTap: () => _pick(context, '阅读方式', _modeNames, p.mangaMode, (i) => p.mangaMode = i),
         ),
         IosRow(
-          title: '翻页方向',
-          value: p.mangaRtl ? '从右向左' : '从左向右',
-          onTap: () => _pick(context, '翻页方向', const ['从右向左', '从左向右'], p.mangaRtl ? 0 : 1, (i) => p.mangaRtl = i == 0),
+          title: '手势分区',
+          subtitle: '点按屏幕哪个区域翻页；中间区域始终是显示 / 隐藏控件',
+          value: _areaNames[p.mangaArea],
+          onTap: () => _pick(context, '手势分区', _areaNames, p.mangaArea, (i) => p.mangaArea = i),
+        ),
+        IosRow(
+          title: '预取页数',
+          subtitle: '当前页前后各预加载几页，网络差时调大更顺',
+          value: '${p.mangaPrefetch} 页',
+          onTap: () => _pick(context, '预取页数', const ['1 页', '2 页', '3 页', '4 页', '5 页', '6 页'], p.mangaPrefetch - 1, (i) => p.mangaPrefetch = i + 1),
         ),
         IosRow(
           title: '图片画质',

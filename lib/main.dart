@@ -37,6 +37,7 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   // 预热 Liquid Glass 着色器：只做磁盘到内存的读取，不阻塞首帧。
-  await LiquidGlassWidgets.initialize();
+  // 只有 iOS 用液体玻璃，安卓走毛玻璃，不需要预载着色器。
+  if (Platform.isIOS) await LiquidGlassWidgets.initialize();
   runApp(const IosApp());
 }

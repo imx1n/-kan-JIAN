@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -44,10 +45,32 @@ class _IosReaderPageState extends State<IosReaderPage> {
   int _retry = 0;
   List<GlobalKey> _keys = const [];
 
+  /// 首次进入时的手势提示：看到第一张图后弹一次，3 秒自动淡出。
+  bool _tip = false;
+  Timer? _tipTimer;
+
+  /// 当前页控制器是按哪个轴向建的。切换横向/纵向翻页时必须重建控制器，
+  /// 否则 PageView 换了轴、控制器还带着旧轴的像素偏移，页码会错位。
+  ({bool vertical, bool reversed})? _pagerAxis;
+
   bool get _saver => _prefs.mangaSaver;
   List<String> get _images => [for (final u in _content?.images ?? const <String>[]) imageUrlFor(u, saver: _saver)];
   bool get _scrollMode => _prefs.mangaScroll;
-  bool get _rtl => _prefs.mangaRtl;
+
+  /// 上下翻页（从上向下 / 从下向上）。
+  bool get _vertical => _prefs.mangaVertical;
+
+  /// 翻页方向反过来：横向从右向左、纵向从下向上。
+  bool get _reversed => _prefs.mangaReversed;
+
+  /// 底栏右上角的模式说明。
+  String get _modeLabel => switch (_prefs.mangaMode) {
+        1 => '单页 · 从右向左',
+        2 => '单页 · 从上向下',
+        3 => '单页 · 从下向上',
+        4 => '条漫阅读',
+        _ => '单页 · 从左向右',
+      };
 
   @override
   void initState() {
@@ -55,10 +78,27 @@ class _IosReaderPageState extends State<IosReaderPage> {
     _prefs.addListener(_onPrefs);
     SystemChrome.setSystemUIOverlayStyle(kDarkChrome);
     _load(widget.chapterUuid, page: widget.initialPage);
+    // 第一次进阅读器：图片出来后再弹分区提示，3 秒自动收起，点一下也能关。
+    if (!_prefs.mangaTipSeen && _prefs.mangaArea != 0) {
+      _tipTimer = Timer(const Duration(milliseconds: 700), () {
+        if (!mounted) return;
+        setState(() => _tip = true);
+        _tipTimer = Timer(const Duration(seconds: 3), _closeTip);
+      });
+    }
+  }
+
+  void _closeTip() {
+    _tipTimer?.cancel();
+    _tipTimer = null;
+    if (!mounted) return;
+    setState(() => _tip = false);
+    _prefs.mangaTipSeen = true;
   }
 
   @override
   void dispose() {
+    _tipTimer?.cancel();
     _prefs.removeListener(_onPrefs);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
@@ -68,7 +108,19 @@ class _IosReaderPageState extends State<IosReaderPage> {
   }
 
   void _onPrefs() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // 阅读方式改成横向 ↔ 竖向翻页后，PageView 换了轴，页控制器必须按新的轴重建，
+    // 否则旧的像素偏移会带到新轴上，页码错位。重建时从当前页开始，读者不会跳走。
+    if (!_scrollMode) {
+      final axis = (vertical: _vertical, reversed: _reversed);
+      if (_pagerAxis != null && (_pagerAxis!.vertical != axis.vertical || _pagerAxis!.reversed != axis.reversed)) {
+        final page = _page;
+        _pager?.dispose();
+        _pager = PageController(initialPage: page);
+        _pagerAxis = axis;
+      }
+    }
+    setState(() {});
   }
 
   Future<void> _load(String uuid, {int page = 0}) async {
@@ -81,12 +133,14 @@ class _IosReaderPageState extends State<IosReaderPage> {
       if (!mounted) return;
       final start = c.images.isEmpty ? 0 : page.clamp(0, c.images.length - 1);
       _pager?.dispose();
+      final axis = (vertical: _vertical, reversed: _reversed);
       setState(() {
         _content = c;
         _loading = false;
         _advancing = false;
         _page = start;
         _pager = PageController(initialPage: start);
+        _pagerAxis = axis;
         _keys = List.generate(c.images.length, (_) => GlobalKey());
       });
       if (_scroll.hasClients) _scroll.jumpTo(0);
@@ -122,9 +176,13 @@ class _IosReaderPageState extends State<IosReaderPage> {
     if (_page >= c.images.length - 1) store.markRead(widget.comic.pathWord, c.chapter.uuid);
   }
 
+  /// 预取当前页前后各 `mangaPrefetch` 页。反向阅读时「前面」是往回的页，
+  /// 所以两个方向都补，代价只是多几张图。
   void _precache(int from) {
     final images = _images;
-    for (var i = from + 1; i <= from + 3 && i < images.length; i++) {
+    final n = _prefs.mangaPrefetch;
+    for (var i = from - n; i <= from + n; i++) {
+      if (i < 0 || i >= images.length || i == from) continue;
       precacheImage(CachedNetworkImageProvider(images[i], headers: AppConfig.imageHeaders), context).ignore();
     }
   }
@@ -142,11 +200,52 @@ class _IosReaderPageState extends State<IosReaderPage> {
     SystemChrome.setEnabledSystemUIMode(show ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
   }
 
+  /// 点击落在哪个分区：1 下一页，-1 上一页，0 切换控件。
+  ///
+  /// 分区方案照搬 PasteMangaX 的三选一（`ComicGestureTip`）：
+  /// - 左右三分：左 1/3 上一页、右 1/3 下一页、中间切换控件；
+  /// - L 形：上 1/3 上一页、下 1/3 下一页，中间一条再按左右三分（视觉上像左侧一竖 + 上方一横）；
+  /// - 自适应：横向单页用左右三分，竖向单页和条漫用 L 形——竖着读时上下分区才顺手。
+  int _zone(double x, double y) {
+    final scrollOrVertical = _scrollMode || _vertical;
+    switch (_prefs.mangaArea) {
+      case 2:
+        return _leftRight(x);
+      case 3:
+        return _lShape(x, y);
+      case 1:
+        return scrollOrVertical ? _lShape(x, y) : _leftRight(x);
+      default:
+        return 0;
+    }
+  }
+
+  static int _leftRight(double x) => x < 1 / 3 ? -1 : (x > 2 / 3 ? 1 : 0);
+
+  static int _lShape(double x, double y) {
+    if (y < 1 / 3) return -1;
+    if (y > 2 / 3) return 1;
+    if (x < 1 / 3) return -1;
+    if (x > 2 / 3) return 1;
+    return 0;
+  }
+
   void _onTapUp(TapUpDetails d) {
-    final x = d.globalPosition.dx / MediaQuery.sizeOf(context).width;
-    if (_scrollMode || (x > .3 && x < .7)) return _setChrome(!_chrome);
-    final forward = _rtl ? x <= .3 : x >= .7;
+    final s = MediaQuery.sizeOf(context);
+    final zone = _zone(d.globalPosition.dx / s.width, d.globalPosition.dy / s.height);
+    if (zone == 0) return _setChrome(!_chrome);
+    // 反向阅读（日漫从右向左、从下向上）时左右/上下语义互换。
+    final forward = _reversed ? zone < 0 : zone > 0;
+    if (_scrollMode) return _scrollBy(forward ? 1 : -1);
     _goTo(_page + (forward ? 1 : -1), animate: true);
+  }
+
+  /// 条漫里按分区翻一屏，用滚动而不是跳到某页——页高不固定，跳转位置会偏。
+  void _scrollBy(int direction) {
+    if (!_scroll.hasClients) return;
+    final h = MediaQuery.sizeOf(context).height;
+    final target = (_scroll.position.pixels + direction * h * .88).clamp(0.0, _scroll.position.maxScrollExtent);
+    _scroll.animateTo(target, duration: const Duration(milliseconds: 280), curve: Curves.easeOutCubic);
   }
 
   void _goTo(int page, {bool animate = false}) {
@@ -220,6 +319,7 @@ class _IosReaderPageState extends State<IosReaderPage> {
           _topBar(c),
           _bottomPanel(c),
           if (!_chrome && c != null && _images.isNotEmpty) _miniChip(c),
+          if (_tip) Positioned.fill(child: _GestureTip(area: _prefs.mangaArea, vertical: _scrollMode || _vertical, reversed: _reversed, onTap: _closeTip)),
         ],
       ),
     );
@@ -264,7 +364,10 @@ class _IosReaderPageState extends State<IosReaderPage> {
     }
     return PageView.builder(
       controller: _pager,
-      reverse: _rtl,
+      // 单页模式：横向从上向下/从下向上翻，或纵向上/下翻。
+      // PageView 自带横向手势；竖向用一个旋转过的轴来实现，见 _rotatedPager。
+      scrollDirection: _vertical ? Axis.vertical : Axis.horizontal,
+      reverse: _reversed,
       itemCount: images.length + 1,
       onPageChanged: _onPage,
       itemBuilder: (context, i) => i == images.length ? GestureDetector(onTap: () => _setChrome(!_chrome), child: _endCard(c)) : ZoomablePage(onTapUp: _onTapUp, child: _image(images[i])),
@@ -372,7 +475,7 @@ class _IosReaderPageState extends State<IosReaderPage> {
                     style: const TextStyle(fontSize: 15, color: IosColors.dInk),
                   ),
                   const Spacer(),
-                  Text(_scrollMode ? '条漫阅读' : (_rtl ? '单页 · 从右向左' : '单页 · 从左向右'), style: const TextStyle(fontSize: 13, color: IosColors.dMuted)),
+                  Text(_modeLabel, style: const TextStyle(fontSize: 13, color: IosColors.dMuted)),
                 ],
               ),
               Row(
@@ -380,7 +483,8 @@ class _IosReaderPageState extends State<IosReaderPage> {
                   _chapterArrow('chevronLeft', '上一话', c?.chapter.prev),
                   Expanded(
                     child: Directionality(
-                      textDirection: _rtl && !_scrollMode ? TextDirection.rtl : TextDirection.ltr,
+                      // 滑块方向跟着翻页方向走：从右向左 / 从下向上时反着拉。
+                      textDirection: _reversed ? TextDirection.rtl : TextDirection.ltr,
                       child: CupertinoSlider(
                         value: hasPages ? _page.toDouble() : 0,
                         max: hasPages ? math.max(1, n - 1).toDouble() : 1,
@@ -657,6 +761,110 @@ class _IosReaderPageState extends State<IosReaderPage> {
       },
     ),
   );
+}
+
+/// 首次进入阅读器时的分区提示：用半透明色块画出「哪里翻页、哪里切控件」，
+/// 3 秒后自动淡出，点一下也能关。
+///
+/// 形状沿用了 PasteMangaX 的 `ReaderGestureTipsView`：上下分区画成一竖一横的 L 形，
+/// 左右分区画成三块竖条，颜色用绿=上一页、红=下一页，和那个项目的取色一致。
+class _GestureTip extends StatefulWidget {
+  const _GestureTip({required this.area, required this.vertical, required this.reversed, required this.onTap});
+
+  final int area;
+  final bool vertical;
+  final bool reversed;
+  final VoidCallback onTap;
+
+  @override
+  State<_GestureTip> createState() => _GestureTipState();
+}
+
+class _GestureTipState extends State<_GestureTip> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 260))..forward();
+
+  static const _prev = Color(0x6651CF66);
+  static const _next = Color(0x66FF6B6B);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // L 形：竖向（条漫、上下翻）和「自适应 + 竖向」都用它；其余用左右三分。
+    final lShape = widget.area == 3 || (widget.area == 1 && widget.vertical);
+    // 反向阅读时上一页/下一页的色块对调。
+    final left = widget.reversed ? _next : _prev;
+    final right = widget.reversed ? _prev : _next;
+    return FadeTransition(
+      opacity: _c,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Stack(
+          children: [
+            Positioned.fill(child: ColoredBox(color: const Color(0x59000000))),
+            // 色块
+            if (lShape) ...[
+              Positioned(top: 0, left: 0, right: 0, height: MediaQuery.sizeOf(context).height / 3, child: ColoredBox(color: left)),
+              Positioned(bottom: 0, left: 0, right: 0, height: MediaQuery.sizeOf(context).height / 3, child: ColoredBox(color: right)),
+              Positioned(top: 0, left: 0, width: 44, height: MediaQuery.sizeOf(context).height / 3, child: ColoredBox(color: left)),
+            ] else ...[
+              Positioned(top: 0, bottom: 0, left: 0, width: MediaQuery.sizeOf(context).width / 3, child: ColoredBox(color: left)),
+              Positioned(top: 0, bottom: 0, right: 0, width: MediaQuery.sizeOf(context).width / 3, child: ColoredBox(color: right)),
+            ],
+            // 中间：切换控件
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('中间点按', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: .72))),
+                      const SizedBox(height: 4),
+                      const Text('显示 / 隐藏控件', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Colors.white)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // 上下分区的文字
+            Positioned(
+              top: 96,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(child: Center(child: _label(widget.reversed ? '下一页' : '上一页'))),
+            ),
+            Positioned(
+              bottom: 110,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(child: Center(child: _label(widget.reversed ? '上一页' : '下一页'))),
+            ),
+            Positioned(
+              bottom: 44,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                child: Center(
+                  child: Text('点按任意处关闭提示', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: .55))),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String t) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(color: const Color(0x59000000), borderRadius: BorderRadius.circular(14)),
+        child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+      );
 }
 
 /// 阅读设置：阅读方式、翻页方向、图片画质、页面亮度集中在一个面板。

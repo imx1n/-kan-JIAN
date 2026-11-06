@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
@@ -84,21 +86,32 @@ class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       // 根部挂一个 1×1 的隐藏 WebView：轻小说源站拦下 HTTP 客户端时用它取页面。
-      // 外面再包一层 Liquid Glass：让玻璃组件能读到 MaterialApp 的明暗模式。
-      builder: (context, child) => LiquidGlassWidgets.wrap(
-        brightnessResolver: Theme.maybeBrightnessOf,
-        child: GlassScope(
-          reduce: GlassScope.reduce,
-          child: Stack(
-            children: [
-              child!,
-              Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host()),
-            ],
-          ),
+      // iOS 外面再包一层 Liquid Glass（让玻璃组件能读到 MaterialApp 的明暗模式）；
+      // 安卓走毛玻璃，不需要这层。
+      builder: (context, child) => _Shell(
+        child: Stack(
+          children: [
+            child!,
+            Positioned(left: 0, top: 0, child: WenkuWebFetcher.instance.host()),
+          ],
         ),
       ),
       home: const IosShell(),
     );
+  }
+}
+
+/// iOS 才包 Liquid Glass 的包裹层；安卓只挂 GlassScope（毛玻璃不需要库的上下文）。
+class _Shell extends StatelessWidget {
+  const _Shell({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scoped = GlassScope(reduce: GlassScope.reduce, child: child);
+    if (!Platform.isIOS) return scoped;
+    return LiquidGlassWidgets.wrap(brightnessResolver: Theme.maybeBrightnessOf, child: scoped);
   }
 }
 
@@ -289,11 +302,22 @@ class _TabDock extends StatelessWidget {
     return Positioned(
       left: 0,
       right: 0,
+      // 高度必须显式给：不给的话胶囊会按内容撑到 ~49，比右边的搜索球（64）矮一截，
+      // 看上去就是被压扁的一条。
+      height: 64,
       bottom: bottom > 0 ? bottom - 6 : 16,
       child: ListenableBuilder(
         listenable: LibraryStore.instance,
         builder: (context, _) {
           final hasUpdate = LibraryStore.instance.entries.any((e) => e.hasUpdate);
+          // iOS 用库的 GlassTabBar（水母胶囊形变 + 栏上直接拖动）。
+          // 安卓用它只会画出 2D 轻量着色器，观感不如原来的毛玻璃，所以走 _frostedDock。
+          if (!Platform.isIOS) {
+            return ValueListenableBuilder<double>(
+              valueListenable: IosShell.pagePos,
+              builder: (context, pos, _) => _frostedDock(context, pos.round().clamp(0, _items.length - 1), hasUpdate),
+            );
+          }
           return GlassTabBar.bottom(
             tabs: [
               for (var i = 0; i < _items.length; i++)
@@ -335,6 +359,103 @@ class _TabDock extends StatelessWidget {
       ),
     );
   }
+
+  /// 安卓的标签栏：毛玻璃胶囊 + 自己算的选中块，0.3.6 之前的样子。
+  Widget _frostedDock(BuildContext context, int active, bool hasUpdate) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 18),
+    child: Row(
+      // 撑满 64 高，和右边固定 64 的搜索球一致。
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Glass(
+            radius: 32,
+            padding: const EdgeInsets.all(5),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final w = c.maxWidth / 3;
+                return Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: Motion.of(context, 260),
+                      curve: Motion.ease,
+                      left: w * active,
+                      top: 0,
+                      bottom: 0,
+                      width: w,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        for (var i = 0; i < _items.length; i++)
+                          Expanded(
+                            child: Pressable(
+                              haptic: true,
+                              pressedScale: .96,
+                              semanticLabel: i == 0 && hasUpdate && active != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
+                              onTap: () => IosShell.tab.value = i,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Stack(
+                                    clipBehavior: Clip.none,
+                                    children: [
+                                      AppIcon(i == active ? _items[i].$2 : _items[i].$1, size: 23, color: i == active ? IosColors.accent : IosColors.tab, stroke: 1.7),
+                                      if (i == 0 && hasUpdate && active != 0)
+                                        Positioned(
+                                          top: -1,
+                                          right: -3,
+                                          child: Container(
+                                            width: 8,
+                                            height: 8,
+                                            decoration: BoxDecoration(
+                                              color: IosColors.accent,
+                                              shape: BoxShape.circle,
+                                              border: Border.all(color: IosColors.surface, width: 1.5),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _items[i].$3,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      height: 14 / 11,
+                                      color: i == active ? IosColors.accent : IosColors.tab,
+                                      fontWeight: i == active ? FontWeight.w600 : FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Pressable(
+          semanticLabel: '搜索',
+          onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+          child: Glass(
+            radius: 32,
+            child: SizedBox.square(
+              dimension: 64,
+              child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 

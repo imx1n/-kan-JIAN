@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -102,19 +105,18 @@ class GlassScope extends InheritedNotifier<ValueNotifier<bool>> {
   }
 }
 
-/// 玻璃材质：Liquid Glass（着色器折射）＋ 减少透明度时退回实底。
+/// 玻璃材质：iOS 用 Liquid Glass（着色器折射），安卓用毛玻璃；减少透明度时都退回实底。
 ///
 /// 只用于导航、工具和暂态面板，内容层保持实底。全 App 的玻璃都走这一个组件
 /// （标签栏、浮动按钮、底部面板、阅读工具条），所以换材质只需要改这里。
 ///
-/// 用 `liquid_glass_widgets` 的 [AdaptiveGlass]，但**必须显式选 `premium` 档**：
-/// 它的默认值是 `standard`，走的是 2D 轻量着色器，只有模糊和高光，没有真正的
-/// 折射、色散和背景采样——看上去和普通毛玻璃没区别。`premium` 才走 Impeller
-/// 的完整管线（`toImageSync` 抓背景 + 逐像素折射）。代价是每帧一次纹理抓取，
-/// 所以只在静态浮层上用；列表项里的玻璃用 [GlassQuality.standard]。
+/// **两端分开**：iOS 走 `liquid_glass_widgets` 的 [AdaptiveGlass]（Impeller 着色器，
+/// 有折射、色散和高光）；安卓没有 Impeller 那套 `toImageSync` 背景抓取，库在安卓上
+/// 只剩 2D 轻量路径或纯模糊，观感反而不如原来的毛玻璃，所以安卓保留
+/// `BackdropFilter` + 半透明填充 + 细亮边的老实现。
 ///
-/// 系统开启「降低透明度」或「增加对比度」时，库会自动退回毛玻璃；我们再额外
-/// 提供实底，避免文字糊掉。
+/// iOS 上**必须显式选 `premium` 档**：库的默认值是 `standard`，走的是 2D 轻量着色器，
+/// 只有模糊和高光，没有真正的折射——看上去和毛玻璃没区别。
 class Glass extends StatelessWidget {
   const Glass({super.key, required this.child, this.radius = 22, this.dark = false, this.padding, this.shadow = true, this.quality = GlassQuality.premium});
 
@@ -124,8 +126,8 @@ class Glass extends StatelessWidget {
   final EdgeInsetsGeometry? padding;
   final bool shadow;
 
-  /// 渲染档位。[GlassQuality.premium] 有折射；[GlassQuality.standard] 只有模糊，
-  /// 用在会跟着列表滚动的玻璃上（每帧抓背景纹理代价太高）。
+  /// 渲染档位，仅 iOS 生效。[GlassQuality.premium] 有折射；[GlassQuality.standard]
+  /// 只有模糊，用在会跟着列表滚动的玻璃上（每帧抓背景纹理代价太高）。
   final GlassQuality quality;
 
   @override
@@ -151,6 +153,31 @@ class Glass extends StatelessWidget {
               border: Border.all(color: dark ? const Color(0x2EFFFFFF) : const Color(0x8CFFFFFF), width: .8),
             ),
             child: content,
+          ),
+        ),
+      );
+    }
+
+    // 安卓：毛玻璃。模糊 22 + 半透明填充 + 细亮边，和 0.3.6 之前一致。
+    if (!Platform.isIOS) {
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: r,
+          boxShadow: shadow ? [BoxShadow(color: dark ? const Color(0x59000000) : const Color(0x1F1A1A28), blurRadius: 18, offset: const Offset(0, 6))] : null,
+        ),
+        child: ClipRRect(
+          borderRadius: r,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            child: Container(
+              padding: padding,
+              decoration: BoxDecoration(
+                color: dark ? const Color(0xAD292A31) : const Color(0xB0F8F8FB),
+                borderRadius: r,
+                border: Border.all(color: dark ? const Color(0x2EFFFFFF) : const Color(0x8CFFFFFF), width: .8),
+              ),
+              child: child,
+            ),
           ),
         ),
       );

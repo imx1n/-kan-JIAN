@@ -159,13 +159,16 @@ void main() {
     await tester.scrollUntilVisible(find.text('阅读设置'), -200);
     await tester.tap(find.text('阅读设置'));
     await tester.pumpAndSettle();
-    expect(find.text('翻页方向'), findsOneWidget);
+    // 阅读方式把「单页横/纵 × 正反 + 条漫」合成一个选项，不再单列「翻页方向」。
+    expect(find.text('阅读方式'), findsOneWidget);
+    expect(find.text('手势分区'), findsOneWidget);
     expect(find.text('纸白 · 19 磅'), findsOneWidget);
     await tester.tap(find.text('阅读方式'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('条漫').last);
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.mangaScroll, isTrue);
+    expect(ReaderPrefs.instance.mangaMode, 4);
   });
 
   uiTest('账号同步：未登录显示登录表单，填好账号密码才能登录', (tester) async {

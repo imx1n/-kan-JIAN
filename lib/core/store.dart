@@ -362,8 +362,15 @@ class ReaderPrefs extends ChangeNotifier {
     'brightness': 1.0,
     'font': 0,
     'fontSize': 19.0,
-    'mangaScroll': false,
-    'mangaRtl': true,
+    // 漫画阅读模式，沿用 PMX 的划分：
+    // 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，4 条漫。
+    'mangaMode': 0,
+    // 手势分区：0 关闭（只有中间切换控件），1 自适应，2 左右三分，3 L 形。
+    'mangaArea': 1,
+    // 首次进入阅读器时的分区提示遮罩是否已看过。
+    'mangaTipSeen': false,
+    // 预取页数：当前页前/后各预加载几页。
+    'mangaPrefetch': 3,
     'mangaSaver': false,
     'mangaBrightness': 1.0,
     'proxy': AppConfig.defaultProxy,
@@ -420,10 +427,39 @@ class ReaderPrefs extends ChangeNotifier {
   set font(int v) => _set('font', v);
   double get fontSize => _get('fontSize');
   set fontSize(double v) => _set('fontSize', v);
-  bool get mangaScroll => _get('mangaScroll');
-  set mangaScroll(bool v) => _set('mangaScroll', v);
-  bool get mangaRtl => _get('mangaRtl');
-  set mangaRtl(bool v) => _set('mangaRtl', v);
+  /// 漫画阅读模式：
+  /// 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，4 条漫。
+  ///
+  /// 划分参考 PasteMangaX（`ComicCategories.READER_MODE_*`）：它把「单页」按横/纵、
+  /// 正/反拆成四种，交互差异全部由手势分区和目标位置算出来，代码里只有一套翻页逻辑。
+  int get mangaMode => _get('mangaMode');
+  set mangaMode(int v) => _set('mangaMode', v.clamp(0, 4));
+
+  /// 是否条漫（连续纵向滚动）。
+  bool get mangaScroll => mangaMode == 4;
+  set mangaScroll(bool v) => mangaMode = v ? 4 : 0;
+
+  /// 是否从右向左翻（日漫顺序）。仅对横向模式有意义。
+  bool get mangaRtl => mangaMode == 1 || mangaMode == 3;
+  set mangaRtl(bool v) => mangaMode = v ? (mangaScroll ? 4 : 1) : (mangaScroll ? 4 : 0);
+
+  /// 竖向翻页（上下翻，不是左右）。
+  bool get mangaVertical => mangaMode == 2 || mangaMode == 3;
+
+  /// 翻页方向反过来：从下向上 / 从右向左。
+  bool get mangaReversed => mangaMode == 1 || mangaMode == 3;
+
+  /// 手势分区：0 关闭，1 自适应，2 左右三分，3 L 形。
+  int get mangaArea => _get('mangaArea');
+  set mangaArea(int v) => _set('mangaArea', v.clamp(0, 3));
+
+  /// 首次进入阅读器时是否已经展示过手势分区提示。
+  bool get mangaTipSeen => _get('mangaTipSeen');
+  set mangaTipSeen(bool v) => _set('mangaTipSeen', v);
+
+  /// 预取页数：当前页前后各预加载几页。
+  int get mangaPrefetch => _get('mangaPrefetch');
+  set mangaPrefetch(int v) => _set('mangaPrefetch', v.clamp(1, 8));
 
   /// 省流画质：图片用 800px 高（接口默认 1500px）。
   bool get mangaSaver => _get('mangaSaver');
