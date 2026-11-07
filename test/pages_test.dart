@@ -34,6 +34,12 @@ void main() {
     IosColors.isDark = false;
   });
 
+  // 偏好写入默认去抖 320ms。测试里关掉：否则用例结束时会挂着定时器，
+  // flutter_test 会报「A Timer is still pending even after the widget tree was disposed」。
+  // （tearDown 太晚，那个断言在用例体结束时就跑了。）
+  setUp(() => ReaderPrefs.debounce = false);
+  tearDown(() => ReaderPrefs.debounce = true);
+
   Future<void> pump(WidgetTester tester, Widget child) async {
     tester.view.physicalSize = const Size(1179, 2556);
     tester.view.devicePixelRatio = 3;
@@ -200,7 +206,7 @@ void main() {
     await tester.tap(find.text('外观设置'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(CupertinoSwitch));
+    await tester.tap(find.byType(AppSwitch));
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.reduceTransparency, isTrue);
     expect(GlassScope.reduce.value, isTrue);
@@ -241,7 +247,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.theme, 1);
 
-    expect(find.byType(CupertinoSwitch), findsNothing);
+    expect(find.byType(AppSwitch), findsNothing);
 
     await tester.tap(find.text('字体与排版'));
     await tester.pumpAndSettle();

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -372,6 +373,9 @@ class ReaderPrefs extends ChangeNotifier {
     // 预取页数：当前页前/后各预加载几页。
     'mangaPrefetch': 3,
     'mangaSaver': false,
+    // 图片适配：0 自动，1 适应宽度，2 适应高度，3 适应屏幕，4 原始尺寸。
+    // 对应 PageFit.fromValue。
+    'mangaFit': 0,
     'mangaBrightness': 1.0,
     'proxy': AppConfig.defaultProxy,
     'shelfSort': 0,
@@ -413,10 +417,35 @@ class ReaderPrefs extends ChangeNotifier {
 
   T _get<T>(String k) => _v[k] as T;
 
+  /// 落盘去抖。拖动滑块时每帧都会 `_set`，如果每次都 `jsonEncode` 整张表
+  /// 再走平台通道写盘，主线程会被写盘啃掉——这就是「亮度滑一下很卡」。
+  /// 现在内存里立刻生效、立刻通知，写盘合并到 320ms 后一次。
+  Timer? _saveTimer;
+
+  /// 是否合并写盘。真机上是 true（拖动滑块时别每帧写盘）；
+  /// 测试里设成 false，否则用例结束时会有个挂着的定时器。
+  static bool debounce = true;
+
   void _set(String k, Object v) {
+    // 值没变就不通知。拖滑块时同一档会重复回调，没必要让整棵树重建。
+    if (_v[k] == v) return;
     _v[k] = v;
-    _prefs.setString(_k, jsonEncode(_v));
     notifyListeners();
+    if (!debounce) {
+      _flush();
+      return;
+    }
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 320), _flush);
+  }
+
+  /// 立刻写盘（退出阅读器、切后台这类时机用）。
+  void flush() => _flush();
+
+  void _flush() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    _prefs.setString(_k, jsonEncode(_v));
   }
 
   int get theme => _get('theme');
@@ -466,6 +495,11 @@ class ReaderPrefs extends ChangeNotifier {
   /// 省流画质：图片用 800px 高（接口默认 1500px）。
   bool get mangaSaver => _get('mangaSaver');
   set mangaSaver(bool v) => _set('mangaSaver', v);
+
+  /// 图片适配方式，取值见 `PageFit.fromValue`。
+  int get mangaFit => _get('mangaFit');
+  set mangaFit(int v) => _set('mangaFit', v.clamp(0, 4));
+
 
   /// 漫画页面明暗，0.3–1；只模拟，不改系统亮度。
   double get mangaBrightness => _get('mangaBrightness');

@@ -1,10 +1,10 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../core/store.dart';
 import '../ui/icons.dart';
 import '../ui/motion.dart';
 import 'ios_novel.dart' show novelPaperName, showNovelAppearance;
+import '../reader/page_fit.dart';
 import 'ios_theme.dart';
 
 /// 「我的」下的二级设置页：玻璃返回按钮 + 居中标题 + 分组列表。账号同步页也用它。
@@ -71,7 +71,7 @@ class IosAppearancePage extends StatelessWidget {
         IosRow(
           title: '减少透明度',
           chevron: false,
-          valueWidget: CupertinoSwitch(value: p.reduceTransparency, activeTrackColor: IosColors.accent, onChanged: GlassScope.set),
+          valueWidget: AppSwitch(value: p.reduceTransparency, onChanged: GlassScope.set),
           onTap: () => GlassScope.set(!p.reduceTransparency),
         ),
       ]),
@@ -185,6 +185,12 @@ class IosReadingSettingsPage extends StatelessWidget {
           subtitle: '当前页前后各预加载几页，网络差时调大更顺',
           value: '${p.mangaPrefetch} 页',
           onTap: () => _pick(context, '预取页数', const ['1 页', '2 页', '3 页', '4 页', '5 页', '6 页'], p.mangaPrefetch - 1, (i) => p.mangaPrefetch = i + 1),
+        ),
+        IosRow(
+          title: '图片适配',
+          subtitle: '纵向阅读选「适应宽度」，页面首尾相接不留白边',
+          value: PageFit.fromValue(p.mangaFit).label,
+          onTap: () => _pick(context, '图片适配', [for (final f in PageFit.values) f.label], p.mangaFit, (i) => p.mangaFit = i),
         ),
         IosRow(
           title: '图片画质',

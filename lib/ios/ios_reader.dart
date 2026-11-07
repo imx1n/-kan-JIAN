@@ -16,6 +16,7 @@ import '../reader/reader_transition.dart';
 import '../reader/reader_view.dart';
 import '../reader/reading_mode.dart';
 import '../reader/reader_chrome.dart';
+import '../reader/page_fit.dart';
 import '../reader/reader_theme.dart';
 import '../ui/icons.dart';
 import '../ui/widgets.dart' show revealChapterRow;
@@ -38,6 +39,26 @@ class _IosReaderPageState extends State<IosReaderPage> {
   final _prefs = ReaderPrefs.instance;
   bool _chrome = true;
 
+  /// 页面亮度单独走通知器。
+  ///
+  /// 亮度是拖动中每帧都在变的值，如果它和别的设置一样走 `setState`，
+  /// 拖一下滑块整个阅读区（含所有图片页）就重建几十次——这就是
+  /// 「亮度滑一下很卡」。现在只有压暗那一层 `ColoredBox` 跟着重建。
+  final _brightness = ValueNotifier<double>(1);
+
+  /// 阅读区缓存的控件实例。
+  ///
+  /// `_readerBody()` 每次调用都会新建一个 `ReaderView`。只改亮度或预加载页数时
+  /// 这个实例完全没变，返回同一个实例可以让 Flutter 直接跳过整棵子树的重建
+  /// （`Element.updateChild` 对同一个 widget 实例是短路返回的）。
+  Widget? _body;
+
+  /// 上一次看到的相关偏好，用来判断这次通知要不要重建。
+  int _lastMode = 0;
+  bool _lastSaver = false;
+  int _lastArea = 0;
+  int _lastFit = 0;
+
   /// 图片重新载入用的计数，换 key 强制重建。
   int _retry = 0;
 
@@ -53,6 +74,9 @@ class _IosReaderPageState extends State<IosReaderPage> {
 
   ReadingMode get _mode => ReadingMode.fromPreference(_prefs.mangaMode);
 
+  /// 「图片适配」设置。实际用哪一档还要过一遍 [PageFit.resolve]（auto 会跟着阅读方式走）。
+  PageFit get _fit => PageFit.fromValue(_prefs.mangaFit);
+
   /// 当前话的页（已应用省流画质）。
   List<String> get _images => [for (final p in _ctl.current?.pages ?? const <ReaderPage>[]) imageUrlFor(p.url, saver: _saver)];
 
@@ -63,6 +87,11 @@ class _IosReaderPageState extends State<IosReaderPage> {
   void initState() {
     super.initState();
     _prefs.addListener(_onPrefs);
+    _lastMode = _prefs.mangaMode;
+    _lastSaver = _prefs.mangaSaver;
+    _lastArea = _prefs.mangaArea;
+    _lastFit = _prefs.mangaFit;
+    _brightness.value = _prefs.mangaBrightness;
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
     _ctl.open(widget.chapterUuid, page: widget.initialPage);
     // 第一次进阅读器：图片出来后再弹分区提示，3 秒自动收起，点一下也能关。
@@ -87,6 +116,9 @@ class _IosReaderPageState extends State<IosReaderPage> {
   void dispose() {
     _tipTimer?.cancel();
     _prefs.removeListener(_onPrefs);
+    // 退出阅读器时把去抖中的偏好立刻写掉，避免 320ms 内退出丢设置。
+    _prefs.flush();
+    _brightness.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
     _ctl.removeListener(_onEngine);
@@ -94,12 +126,29 @@ class _IosReaderPageState extends State<IosReaderPage> {
     super.dispose();
   }
 
+  /// 偏好变化时判断要不要重建整页。
+  ///
+  /// 只有「影响阅读区结构」的三项（阅读方式、画质、点击区域）需要重建；
+  /// 亮度和预加载页数改完立刻返回，阅读区一个像素都不动。
   void _onPrefs() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _brightness.value = _prefs.mangaBrightness;
+    final structural = _prefs.mangaMode != _lastMode ||
+        _prefs.mangaSaver != _lastSaver ||
+        _prefs.mangaArea != _lastArea ||
+        _prefs.mangaFit != _lastFit;
+    _lastMode = _prefs.mangaMode;
+    _lastSaver = _prefs.mangaSaver;
+    _lastArea = _prefs.mangaArea;
+    _lastFit = _prefs.mangaFit;
+    if (!structural) return;
+    _body = null;
+    setState(() {});
   }
 
   void _onEngine() {
     if (!mounted) return;
+    _body = null;
     setState(() {});
     _save();
     _precache(_page);
@@ -136,10 +185,13 @@ class _IosReaderPageState extends State<IosReaderPage> {
     }
   }
 
-  void _setChrome(bool show) {
-    setState(() => _chrome = show);
-    SystemChrome.setEnabledSystemUIMode(show ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
-  }
+  /// 显示 / 隐藏阅读控件。
+  ///
+  /// **不再切 `SystemUiMode.immersiveSticky`**。进沉浸模式之后，安卓会把
+  /// 下一次点按当作「唤出系统栏」吃掉，要再点一次才落到阅读区——这就是
+  /// 「点好几下设置才出来」的原因。现在系统栏始终 edge-to-edge，隐藏的
+  /// 只有我们自己的顶栏和底栏，点按永远第一时间到达。
+  void _setChrome(bool show) => setState(() => _chrome = show);
 
   /// 换话：交给引擎，它会重建三话窗口。
   void _openChapter(String? uuid) {
@@ -156,10 +208,29 @@ class _IosReaderPageState extends State<IosReaderPage> {
       backgroundColor: ReaderPalette.reader,
       body: Stack(
         children: [
-          Positioned.fill(child: _readerBody()),
+          Positioned.fill(
+            child: AnimatedSwitcher(
+              duration: Motion.of(context, 200),
+              switchInCurve: Motion.ease,
+              switchOutCurve: Motion.ease,
+              // 两套视图叠着淡入淡出，不位移：翻页轴不同，横移会打架。
+              layoutBuilder: (current, previous) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 旧的在下、新的在上，淡入盖住淡出，中途不会露出背板色。
+                  for (final child in previous) child,
+                  ?current,
+                ],
+              ),
+              child: KeyedSubtree(key: ValueKey(_mode), child: _readerBody()),
+            ),
+          ),
           Positioned.fill(
             child: IgnorePointer(
-              child: ColoredBox(color: Colors.black.withValues(alpha: (1 - _prefs.mangaBrightness) * .75)),
+              child: ValueListenableBuilder<double>(
+                valueListenable: _brightness,
+                builder: (context, b, _) => ColoredBox(color: Colors.black.withValues(alpha: (1 - b) * .75)),
+              ),
             ),
           ),
           // 顶部栏：整条栏 + 大标题（拷贝漫画式布局）
@@ -223,7 +294,17 @@ class _IosReaderPageState extends State<IosReaderPage> {
   }
 
   /// 阅读区：新引擎的 ReaderView，三话连续、支持跨话接续。
+  ///
+  /// 返回值会缓存：只有阅读方式 / 画质 / 点击区域 / 引擎状态变化时才重建，
+  /// 拖亮度或改预加载页数不会碰它。
   Widget _readerBody() {
+    if (_body != null) return _body!;
+    final body = _buildBody();
+    _body = body;
+    return body;
+  }
+
+  Widget _buildBody() {
     final c = _ctl.current;
     if (c == null || _ctl.loading) {
       return Center(child: CupertinoActivityIndicator(color: ReaderPalette.muted, radius: 12));
@@ -250,7 +331,9 @@ class _IosReaderPageState extends State<IosReaderPage> {
       pageBuilder: (context, page) => _imagePage(page),
       transitionBuilder: (context, t) => ReaderTransition(
         transition: t,
-        continuous: _mode.continuous,
+        // 纵向阅读（含上下翻页）现在也走连续列表，过渡页必须有确定高度，
+        // 所以这里传 stacked 而不是 continuous。
+        continuous: _mode.stacked,
         onRetry: (ch) => _ctl.retryChapter(ch),
         onCatalog: () => _showCatalog(c),
         onBackToChapter: () => _ctl.jumpTo(0),
@@ -259,36 +342,62 @@ class _IosReaderPageState extends State<IosReaderPage> {
     );
   }
 
-  /// 一页的图片。条漫按宽度铺满，单页按 contain 适配。
+  /// 一页的图片。
+  ///
+  /// 适配方式由「图片适配」设置决定（见 [PageFit]）。纵向阅读（条漫和上下翻页）
+  /// 一律按宽度铺满并让高度跟着原比例走，这样页面自然首尾相接、上下不再出现
+  /// 背板色的白边；横向翻页默认整页适应。
+  ///
+  /// [PageFit.original] 不能用 `BoxFit.none` 直接塞进铺满的容器：`none` 会把
+  /// 图片按原始像素居中，小于屏幕时四周留空、大于屏幕时被裁掉。所以这里包一层
+  /// `Align`，让它从顶部对齐、超出的部分由外层裁掉，滚动阅读才不会一段悬空。
   Widget _imagePage(ReaderPage page) {
     final url = imageUrlFor(page.url, saver: _saver);
-    final w = MediaQuery.sizeOf(context).width;
-    final fitWidth = _mode.continuous;
-    return CachedNetworkImage(
-      key: ValueKey('$url#$_retry'),
+    final size = MediaQuery.sizeOf(context);
+    final applies = _fit.resolve(mode: _mode);
+    final width = size.width;
+
+    // 铺满宽度的模式必须显式给宽度：图片还没到时先占住位置，加载完成不会顶一下。
+    final fillsWidth = applies == PageFit.width;
+    final placeholderHeight = fillsWidth ? width * 1.4 : null;
+
+    Widget image = CachedNetworkImage(
+      key: ValueKey('$url#$_retry#${applies.name}'),
       imageUrl: url,
       httpHeaders: AppConfig.imageHeaders,
-      fit: fitWidth ? BoxFit.fitWidth : BoxFit.contain,
-      width: fitWidth ? w : null,
+      fit: applies.boxFit,
+      width: applies == PageFit.original ? null : (fillsWidth ? width : null),
       fadeInDuration: const Duration(milliseconds: 120),
       progressIndicatorBuilder: (context, _, p) => SizedBox(
-        height: fitWidth ? w * 1.4 : null,
+        height: placeholderHeight,
         child: Center(child: CupertinoActivityIndicator(color: ReaderPalette.muted)),
       ),
       errorWidget: (context, _, _) => SizedBox(
-        height: fitWidth ? w * 1.4 : null,
+        height: placeholderHeight,
         child: Center(
           child: TextAction(
             label: '图片没有载入，点按重试',
             color: ReaderPalette.text,
             onTap: () {
               CachedNetworkImage.evictFromCache(url);
-              setState(() => _retry++);
+              setState(() {
+                _retry++;
+                _body = null;
+              });
             },
           ),
         ),
       ),
     );
+
+    if (applies == PageFit.original) {
+      // 原始尺寸：从顶部居中，宽了由外层（ListView）裁掉两边，不做任何缩放。
+      image = ClipRect(child: Align(alignment: Alignment.topCenter, child: image));
+    } else if (applies == PageFit.height) {
+      image = SizedBox(height: size.height, child: Align(alignment: Alignment.topCenter, child: image));
+    }
+
+    return image;
   }
 
   Widget _locked(ReaderChapter c) => Center(
@@ -365,21 +474,34 @@ class _IosReaderPageState extends State<IosReaderPage> {
     ),
   );
 
+  /// 换阅读方式：立即写入，过渡由 [_readerBody] 外面的交叉淡入负责。
+  ///
+  /// 以前这里是「先压遮罩 140ms → 换 → 再等一帧 → 撤遮罩」。那 140ms 里
+  /// 用户已经点了却什么都没发生，读起来就是「卡了一下」；遮罩本身在浅色
+  /// 主题下还会闪一下灰。现在点下去立刻换，新旧两套视图 200ms 交叉淡入。
+  void _setMode(ReadingMode m) {
+    if (m == _mode) return;
+    // 只写偏好；`_onPrefs` 会识别出阅读方式变了并重建阅读区。
+    _prefs.mangaMode = m.preference;
+  }
+
   void _showSettings() => showAppSheet<void>(
         context,
         // onClose 要收 sheet 自己的 context——外层 context 弹不掉这个路由。
         (sheet) => ReaderSettingsSheet(
           mode: _mode,
-          onMode: (m) => setState(() => _prefs.mangaMode = m.preference),
+          onMode: _setMode,
           prefetch: _prefs.mangaPrefetch,
-          onPrefetch: (v) => setState(() => _prefs.mangaPrefetch = v),
+          // 预加载页数不影响任何可见结构，直接存。
+          onPrefetch: (v) => _prefs.mangaPrefetch = v,
           area: _prefs.mangaArea,
-          onArea: (v) => setState(() => _prefs.mangaArea = v),
+          onArea: (v) => _prefs.mangaArea = v,
           onClose: () => Navigator.pop(sheet),
           saver: _prefs.mangaSaver,
-          onSaver: (v) => setState(() => _prefs.mangaSaver = v),
+          onSaver: (v) => _prefs.mangaSaver = v,
           brightness: _prefs.mangaBrightness,
-          onBrightness: (v) => setState(() => _prefs.mangaBrightness = v),
+          // 亮度走通知器，不触发整页重建。
+          onBrightness: (v) => _prefs.mangaBrightness = v,
         ),
         scrim: kSheetScrimReader,
       );

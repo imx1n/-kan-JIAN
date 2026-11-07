@@ -82,7 +82,7 @@ class AppIcon extends StatelessWidget {
       () => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" '
           'stroke-width="$stroke" stroke-linecap="round" stroke-linejoin="round">${_paths[name] ?? ''}</svg>',
     );
-    final c = color ?? IconTheme.of(context).color ?? const Color(0xFF263C40);
+    final c = color ?? IconTheme.of(context).color ?? const Color(0xFF17181C);
     return SvgPicture.string(
       svg,
       width: size,

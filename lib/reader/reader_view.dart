@@ -46,8 +46,19 @@ class ReaderView extends StatefulWidget {
 }
 
 class _ReaderViewState extends State<ReaderView> {
-  final _pager = PageController();
-  final _scroll = ScrollController();
+  /// 分页器与滚动控制器。
+  ///
+  /// 换阅读方式时**整个换掉**，用目标页作为初始位置——而不是先建在 0 再 `_sync`
+  /// 跳过去。后者会在第一帧画出第 1 页、下一帧才跳到当前页，看上去就是
+  /// 「切模式卡了一下」。
+  /// 这两个控制器在 [didChangeDependencies] 里按「当前读到哪一页」创建。
+  ///
+  /// 换阅读方式时 [AnimatedSwitcher] 会换 key，所以这个 State 是**全新**的，
+  /// `didUpdateWidget` 根本不会跑——控制器必须在第一次 build 之前就带着
+  /// 正确的初始位置，否则第一帧会先画出第 1 页、下一帧再跳过去，看上去就是卡一下。
+  late PageController _pager;
+  late ScrollController _scroll;
+  bool _controllersReady = false;
 
   /// 条目 → key，条漫里用来把目标页滚进视野、以及判断中线落在哪一页。
   final _keys = <Object, GlobalKey>{};
@@ -57,12 +68,53 @@ class _ReaderViewState extends State<ReaderView> {
 
   List<Object> get _items => widget.controller.chapters?.items ?? const [];
 
+  /// 当前该停在哪一页：条目下标 + 条漫模式下的估算像素位置。
+  ///
+  /// 条漫的每页高度要等图片量出来才知道，所以用「屏宽 × 1.4」的常见比例估算，
+  /// 建好之后 `_sync` 会在遮罩底下做一次精确校正（见 [_ReaderViewState._sync]）。
+  ({int index, double offset}) _restingSpot() {
+    final items = _items;
+    final pages = widget.controller.current?.pages;
+    if (items.isEmpty || pages == null || pages.isEmpty) return (index: 0, offset: 0);
+    final target = pages[widget.controller.pageIndex.clamp(0, pages.length - 1)];
+    final index = items.indexOf(target);
+    if (index < 0) return (index: 0, offset: 0);
+    if (!widget.mode.stacked) return (index: index, offset: 0);
+    final w = MediaQuery.sizeOf(context).width;
+    final h = w * 1.4 + (widget.mode.gap ? 8 : 0);
+    return (index: index, offset: index * h);
+  }
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onController);
     widget.controller.seek.addListener(_onSeek);
     WidgetsBinding.instance.addPostFrameCallback((_) => _sync(initial: true));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_controllersReady) return;
+    _controllersReady = true;
+    // 这里才拿得到 MediaQuery（条漫要按屏宽估算偏移），所以控制器放在这建。
+    final spot = _restingSpot();
+    _pager = PageController(initialPage: spot.index);
+    _scroll = ScrollController(initialScrollOffset: spot.offset);
+  }
+
+  /// 用目标位置重建两个控制器。旧的延后一帧再释放，避免它还在本帧被读取。
+  void _rebuildControllers() {
+    final spot = _restingSpot();
+    final oldPager = _pager;
+    final oldScroll = _scroll;
+    _pager = PageController(initialPage: spot.index);
+    _scroll = ScrollController(initialScrollOffset: spot.offset);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldPager.dispose();
+      oldScroll.dispose();
+    });
   }
 
   @override
@@ -76,8 +128,10 @@ class _ReaderViewState extends State<ReaderView> {
       _anchor = null;
     }
     if (old.mode != widget.mode) {
-      // 换了阅读方式，轴和方向都变了，按当前页重新落位。
+      // 换了阅读方式：轴、方向、滚动形态都变了，按当前页重建控制器。
       _anchor = null;
+      _rebuildControllers();
+      // 条漫的估算位置可能在图片量出来之后有偏差，下一帧精确对齐一次。
       WidgetsBinding.instance.addPostFrameCallback((_) => _sync(initial: true));
     }
   }
@@ -86,8 +140,10 @@ class _ReaderViewState extends State<ReaderView> {
   void dispose() {
     widget.controller.removeListener(_onController);
     widget.controller.seek.removeListener(_onSeek);
-    _pager.dispose();
-    _scroll.dispose();
+    if (_controllersReady) {
+      _pager.dispose();
+      _scroll.dispose();
+    }
     super.dispose();
   }
 
@@ -114,7 +170,7 @@ class _ReaderViewState extends State<ReaderView> {
     // 再交给 _sync 对齐——它会在下一帧按锚点重新落位。
     _anchor = page;
     widget.controller.setPage(target);
-    if (widget.mode.continuous) {
+    if (widget.mode.stacked) {
       _scrollTo(at);
     } else if (_pager.hasClients) {
       _pager.jumpToPage(at);
@@ -139,7 +195,7 @@ class _ReaderViewState extends State<ReaderView> {
       return;
     }
 
-    if (widget.mode.continuous) {
+    if (widget.mode.stacked) {
       // 条漫不强行对齐：用户自己在滚。只有首次进入或换模式才定位。
       if (_anchor == null) {
         _anchor = target;
@@ -168,7 +224,7 @@ class _ReaderViewState extends State<ReaderView> {
 
   void _jump(int index) {
     if (index < 0) return;
-    if (widget.mode.continuous) {
+    if (widget.mode.stacked) {
       _scrollTo(index);
       return;
     }
@@ -222,7 +278,7 @@ class _ReaderViewState extends State<ReaderView> {
   void _move(int dir) {
     final items = _items;
     if (items.isEmpty) return;
-    if (widget.mode.continuous) {
+    if (widget.mode.stacked) {
       if (!_scroll.hasClients) return;
       final h = MediaQuery.sizeOf(context).height;
       final target = (_scroll.position.pixels + dir * h * .78).clamp(0.0, _scroll.position.maxScrollExtent);
@@ -254,7 +310,7 @@ class _ReaderViewState extends State<ReaderView> {
   }
 
   Widget _wrapTap(Widget child, {required bool zoom}) {
-    if (zoom && !widget.mode.continuous) {
+    if (zoom && !widget.mode.stacked) {
       return ZoomablePage(onTapUp: (d) => _tap(d.globalPosition), child: child);
     }
     return GestureDetector(behavior: HitTestBehavior.opaque, onTapUp: (d) => _tap(d.globalPosition), child: child);
@@ -271,11 +327,13 @@ class _ReaderViewState extends State<ReaderView> {
     final items = _items;
     if (items.isEmpty) return const SizedBox.shrink();
 
-    if (widget.mode.continuous) {
+    if (widget.mode.stacked) {
       return NotificationListener<ScrollNotification>(
         onNotification: _onScroll,
         child: ListView.builder(
           controller: _scroll,
+          // 从下向上阅读：列表整体反向，条目 0 落在底部，往上是继续读。
+          reverse: widget.mode.reversed,
           physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
           scrollCacheExtent: const ScrollCacheExtent.pixels(2400),
           itemCount: items.length,

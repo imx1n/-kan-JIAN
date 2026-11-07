@@ -131,7 +131,7 @@ class ShiftFadeRoute<T> extends PageRoute<T> {
 /// 实心灰板。漫画阅读器用更轻的 [kSheetScrimReader]（对应 `.comic-settings
 /// .sheet-scrim{background:#0002}`），阅读时尽量不打断画面。
 const Color kSheetScrim = Color(0x5C000000);
-const Color kSheetScrimReader = Color(0x22000000);
+const Color kSheetScrimReader = Color(0x14000000);
 
 /// 底部面板（阅读设置、目录、阅读外观）：从下方 56px（Android 42px）淡入归位，340ms；
 /// 完成时向下退出 220ms。设计稿表达不了的下拉关闭在这里补上。

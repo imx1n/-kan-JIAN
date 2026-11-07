@@ -51,6 +51,14 @@ android {
         debug {
             signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
         }
+        // profile 同理。它是测性能用的包（AOT + 观测工具），必须能直接覆盖
+        // 装在手头那个包上，否则每次都得卸载、丢书架。
+        //
+        // 注意：`profile` 这个 buildType 由 Flutter Gradle 插件先建好，
+        // 这里只能改它的签名，不能 `create` 一个同名的（会报 already exists）。
+        getByName("profile") {
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+        }
     }
 }
 

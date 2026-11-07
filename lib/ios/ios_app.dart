@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +14,7 @@ import '../core/store.dart';
 import '../core/update_service.dart';
 import '../ui/format.dart' show formatBytes;
 import '../ui/icons.dart';
+import '../ui/tokens.dart' show Dock;
 import 'ios_detail.dart';
 import 'ios_discover.dart';
 import 'ios_mine.dart';
@@ -164,16 +164,21 @@ class _IosShellState extends State<IosShell> {
                 child: _TabStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()]),
               ),
             ),
-            // 底部渐隐，让悬浮标签栏下的内容不抢视线。
+            // 底部渐隐，让悬浮标签栏下的内容不抢视线。高度跟着标签栏的让位一起算，
+            // 否则手势条抬高标签栏后，渐隐会先于内容结束，露出一条硬边。
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              height: 120,
+              height: Dock.clearance(context) + 40,
               child: IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .88)]),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .92)],
+                    ),
                   ),
                 ),
               ),
@@ -209,11 +214,45 @@ class _TabStackState extends State<_TabStack> {
   /// （例如返回键把标签设为 0、但上一段动画还没结束）。
   bool _dragging = false;
 
+  /// 当前活着的分页器。安卓的胶囊标签栏要能直接左右拖，而它和这里没有
+  /// 父子关系（都在同一个 Stack 里），所以用静态引用把拖动传进来。
+  static _TabStackState? _active;
+
   @override
   void initState() {
     super.initState();
+    _active = this;
     // 重建（热重启、测试里换树）时把选中框位置对齐到起始页，不受上次遗留的值影响。
     IosShell.pagePos.value = widget.index.toDouble();
+  }
+
+  /// 标签栏横向拖动：直接推分页器的像素位置，松手再吸附。
+  ///
+  /// 走 `jumpTo` 而不是 `animateToPage`：拖拽期间位置必须跟手，
+  /// 动画式的滚动会让手指和页面对不上。
+  static void dragBy(double dx) {
+    final s = _active;
+    if (s == null || !s._pages.hasClients) return;
+    final pos = s._pages.position;
+    final target = (pos.pixels - dx).clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    pos.jumpTo(target);
+    final p = target / pos.viewportDimension;
+    IosShell.pagePos.value = p.clamp(0.0, 2.0);
+  }
+
+  /// 标签栏松手：吸附到最近的一页，并把选中标签写回去。
+  static void dragEnd() {
+    final s = _active;
+    if (s == null || !s._pages.hasClients) return;
+    final pos = s._pages.position;
+    final target = (pos.pixels / pos.viewportDimension).round().clamp(0, 2);
+    final d = Motion.ms(300);
+    if (d == Duration.zero) {
+      pos.jumpTo(target * pos.viewportDimension);
+    } else {
+      s._pages.animateToPage(target, duration: d, curve: Motion.ease);
+    }
+    if (IosShell.tab.value != target) IosShell.tab.value = target;
   }
 
   @override
@@ -232,6 +271,7 @@ class _TabStackState extends State<_TabStack> {
 
   @override
   void dispose() {
+    if (identical(_active, this)) _active = null;
     _pages.dispose();
     super.dispose();
   }
@@ -298,14 +338,15 @@ class _TabDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.paddingOf(context).bottom;
     return Positioned(
       left: 0,
       right: 0,
       // 高度必须显式给：不给的话胶囊会按内容撑到 ~49，比右边的搜索球（64）矮一截，
       // 看上去就是被压扁的一条。
-      height: 64,
-      bottom: bottom > 0 ? bottom - 6 : 16,
+      height: Dock.height,
+      // 抬到系统手势区之上，而不是压进去。以前是 `bottom - 6`，小白条正好盖在
+      // 胶囊底部和搜索球下沿。
+      bottom: Dock.bottom(context),
       child: ListenableBuilder(
         listenable: LibraryStore.instance,
         builder: (context, _) {
@@ -315,7 +356,7 @@ class _TabDock extends StatelessWidget {
           if (!Platform.isIOS) {
             return ValueListenableBuilder<double>(
               valueListenable: IosShell.pagePos,
-              builder: (context, pos, _) => _frostedDock(context, pos.round().clamp(0, _items.length - 1), hasUpdate),
+              builder: (context, pos, _) => _frostedDock(context, pos.clamp(0, (_items.length - 1).toDouble()), hasUpdate),
             );
           }
           return GlassTabBar.bottom(
@@ -360,102 +401,114 @@ class _TabDock extends StatelessWidget {
     );
   }
 
-  /// 安卓的标签栏：毛玻璃胶囊 + 自己算的选中块，0.3.6 之前的样子。
-  Widget _frostedDock(BuildContext context, int active, bool hasUpdate) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 18),
-    child: Row(
-      // 撑满 64 高，和右边固定 64 的搜索球一致。
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(
-          child: Glass(
-            radius: 32,
-            padding: const EdgeInsets.all(5),
-            child: LayoutBuilder(
-              builder: (context, c) {
-                final w = c.maxWidth / 3;
-                return Stack(
-                  children: [
-                    AnimatedPositioned(
-                      duration: Motion.of(context, 260),
-                      curve: Motion.ease,
-                      left: w * active,
-                      top: 0,
-                      bottom: 0,
-                      width: w,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
-                      ),
-                    ),
-                    Row(
+  /// 安卓的标签栏：毛玻璃胶囊 + 自己算的选中块。
+  ///
+  /// 和 iOS 一样可以直接在栏上左右拖：拖动交给分页器，松手吸附到最近一页。
+  /// 选中块按 `active`（连续位置取整）移动，和 iOS 的跟手机制对齐。
+  Widget _frostedDock(BuildContext context, double pos, bool hasUpdate) {
+    final active = pos.round().clamp(0, _items.length - 1);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (d) => _TabStackState.dragBy(d.delta.dx),
+      onHorizontalDragEnd: (_) => _TabStackState.dragEnd(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        child: Row(
+          // 撑满 64 高，和右边固定 64 的搜索球一致。
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Glass(
+                radius: 32,
+                padding: const EdgeInsets.all(5),
+                child: LayoutBuilder(
+                  builder: (context, c) {
+                    final w = c.maxWidth / 3;
+                    return Stack(
                       children: [
-                        for (var i = 0; i < _items.length; i++)
-                          Expanded(
-                            child: Pressable(
-                              haptic: true,
-                              pressedScale: .96,
-                              semanticLabel: i == 0 && hasUpdate && active != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
-                              onTap: () => IosShell.tab.value = i,
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Stack(
-                                    clipBehavior: Clip.none,
+                        // 选中块跟着连续位置走（拖动时也跟手），不是翻完才跳一格。
+                        AnimatedPositioned(
+                          duration: Motion.of(context, 260),
+                          curve: Motion.ease,
+                          left: w * pos,
+                          top: 0,
+                          bottom: 0,
+                          width: w,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            for (var i = 0; i < _items.length; i++)
+                              Expanded(
+                                child: Pressable(
+                                  haptic: true,
+                                  pressedScale: .96,
+                                  semanticLabel: i == 0 && hasUpdate && active != 0 ? '${_items[i].$3}，有更新' : _items[i].$3,
+                                  onTap: () => IosShell.tab.value = i,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      AppIcon(i == active ? _items[i].$2 : _items[i].$1, size: 23, color: i == active ? IosColors.accent : IosColors.tab, stroke: 1.7),
-                                      if (i == 0 && hasUpdate && active != 0)
-                                        Positioned(
-                                          top: -1,
-                                          right: -3,
-                                          child: Container(
-                                            width: 8,
-                                            height: 8,
-                                            decoration: BoxDecoration(
-                                              color: IosColors.accent,
-                                              shape: BoxShape.circle,
-                                              border: Border.all(color: IosColors.surface, width: 1.5),
+                                      Stack(
+                                        clipBehavior: Clip.none,
+                                        children: [
+                                          AppIcon(i == active ? _items[i].$2 : _items[i].$1, size: 23, color: i == active ? IosColors.accent : IosColors.tab, stroke: 1.7),
+                                          if (i == 0 && hasUpdate && active != 0)
+                                            Positioned(
+                                              top: -1,
+                                              right: -3,
+                                              child: Container(
+                                                width: 8,
+                                                height: 8,
+                                                decoration: BoxDecoration(
+                                                  color: IosColors.ink,
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(color: IosColors.surface, width: 1.5),
+                                                ),
+                                              ),
                                             ),
-                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _items[i].$3,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          height: 14 / 11,
+                                          color: i == active ? IosColors.accent : IosColors.tab,
+                                          fontWeight: i == active ? FontWeight.w600 : FontWeight.w500,
                                         ),
+                                      ),
                                     ],
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    _items[i].$3,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      height: 14 / 11,
-                                      color: i == active ? IosColors.accent : IosColors.tab,
-                                      fontWeight: i == active ? FontWeight.w600 : FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
-                            ),
-                          ),
+                          ],
+                        ),
                       ],
-                    ),
-                  ],
-                );
-              },
+                    );
+                  },
+                ),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Pressable(
-          semanticLabel: '搜索',
-          onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
-          child: Glass(
-            radius: 32,
-            child: SizedBox.square(
-              dimension: 64,
-              child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
+            const SizedBox(width: 12),
+            Pressable(
+              semanticLabel: '搜索',
+              onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+              child: Glass(
+                radius: 32,
+                child: SizedBox.square(
+                  dimension: 64,
+                  child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 
@@ -656,22 +709,14 @@ Future<UpdateResult> iosManualUpdateCheck(BuildContext context) async {
   if (r.status == UpdateStatus.available) {
     await showIosUpdateDialog(context, r);
   } else if (r.status == UpdateStatus.failed) {
-    final open = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (dialog) => CupertinoAlertDialog(
-        title: const Text('检查更新失败'),
-        content: Text('${r.message ?? '无法连接更新服务'}\n\n可以打开项目 Releases 页手动下载。'),
-        actions: [
-          CupertinoDialogAction(onPressed: () => Navigator.pop(dialog, false), child: const Text('稍后')),
-          CupertinoDialogAction(
-            isDefaultAction: true,
-            onPressed: () => Navigator.pop(dialog, true),
-            child: const Text('打开 Releases'),
-          ),
-        ],
-      ),
+    final open = await showAppConfirm(
+      context,
+      title: '检查更新失败',
+      message: '${r.message ?? '无法连接更新服务'}\n\n可以打开项目 Releases 页手动下载。',
+      confirm: '打开 Releases',
+      cancel: '稍后',
     );
-    if (open == true) await launchUrl(Uri.parse(AppConfig.githubReleasesPage), mode: LaunchMode.externalApplication);
+    if (open) await launchUrl(Uri.parse(AppConfig.githubReleasesPage), mode: LaunchMode.externalApplication);
   } else {
     showIosToast(context, switch (r.status) {
       UpdateStatus.upToDate => r.message ?? '已是最新版本 v${r.current}',

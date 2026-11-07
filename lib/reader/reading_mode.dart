@@ -35,6 +35,14 @@ enum ReadingMode {
   /// 连续滚动时图片之间是否留缝。
   final bool gap;
 
+  /// 是否按「一条」纵向排布（页面首尾相接，不再一页一屏）。
+  ///
+  /// 上下翻页的两种模式（从上向下 / 从下向上）也归到这里：一页一屏时，
+  /// 一张 3:4 的图放在 9:20 的屏幕上，按宽度铺满后上下会各空出一大条背板色，
+  /// 两张图之间断成一段一段。改成首尾相接之后，纵向阅读是连贯的一条，
+  /// 和条漫的观感一致，只是方向可以反过来。
+  bool get stacked => continuous || isVertical;
+
   /// 偏好值 → 模式。数值沿用仓库里已有的 0–4，5 是本轮新增。
   static ReadingMode fromPreference(int v) => switch (v) {
         1 => rightToLeft,

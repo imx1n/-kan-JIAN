@@ -12,6 +12,7 @@ import '../core/routes.dart';
 import '../core/store.dart';
 import '../core/update_service.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show Dock;
 import '../ui/format.dart' show formatBytes;
 import 'ios_account.dart';
 import 'ios_app.dart';
@@ -123,18 +124,14 @@ class _IosMinePageState extends State<IosMinePage> {
   }
 
   Future<void> _clearHistory() async {
-    final ok = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (dialog) => CupertinoAlertDialog(
-        title: const Text('清除阅读记录？'),
-        content: const Text('会清掉每部作品读到哪一页和已读标记。书架上的作品和追更状态会保留。'),
-        actions: [
-          CupertinoDialogAction(onPressed: () => Navigator.pop(dialog, false), child: const Text('取消')),
-          CupertinoDialogAction(isDestructiveAction: true, onPressed: () => Navigator.pop(dialog, true), child: const Text('清除')),
-        ],
-      ),
+    final ok = await showAppConfirm(
+      context,
+      title: '清除阅读记录？',
+      message: '会清掉每部作品读到哪一页和已读标记。书架上的作品和追更状态会保留。',
+      confirm: '清除',
+      destructive: true,
     );
-    if (ok == true) _store.clearHistory();
+    if (ok) _store.clearHistory();
   }
 
   void _open(Widget page) => Navigator.of(context).push(appRoute<void>((_) => page));
@@ -154,7 +151,7 @@ class _IosMinePageState extends State<IosMinePage> {
   Widget build(BuildContext context) {
     return ListView(
       physics: const BouncingScrollPhysics(),
-      padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top, bottom: 130),
+      padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top, bottom: Dock.clearance(context)),
       children: [
         const LargeTitle('我的'),
         InsetGroup(title: '偏好设置', children: [
@@ -219,7 +216,7 @@ class _IosMinePageState extends State<IosMinePage> {
             title: '启动时自动检查',
             subtitle: '每次打开应用检查一次，可随时关闭',
             chevron: false,
-            valueWidget: CupertinoSwitch(value: _prefs.autoUpdate, activeTrackColor: IosColors.accent, onChanged: (v) => setState(() => _prefs.autoUpdate = v)),
+            valueWidget: AppSwitch(value: _prefs.autoUpdate, onChanged: (v) => setState(() => _prefs.autoUpdate = v)),
             onTap: () => setState(() => _prefs.autoUpdate = !_prefs.autoUpdate),
           ),
           IosRow(icon: 'github', title: '项目主页', subtitle: AppConfig.githubPage.replaceFirst('https://', ''), onTap: () => launchUrl(Uri.parse(AppConfig.githubPage), mode: LaunchMode.externalApplication)),

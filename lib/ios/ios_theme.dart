@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
@@ -9,35 +10,48 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import '../core/store.dart';
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show Space;
 
-/// iOS 26 设计稿的色板：近白实底承载内容，暖棕为唯一强调色；深色模式按设计稿的 dark 变量。
-/// 阅读器始终是深色，直接用下面 d 开头的常量。
+/// 全 App 的中性色板：纯黑白灰，没有任何主题色。
+///
+/// 以前这里有一个暖棕强调色（`#914638`），而阅读设置面板用的是另一套灰蓝，
+/// 两个界面并排时色相打架。现在「强调」不再靠颜色表达，只靠三件事：
+/// 实心反相（黑底白字 / 白底黑字）、描边、字重。所以 [accent] 直接等于 [ink]，
+/// 任何原来取 accent 的地方都会自动变成主文字色，不会残留色相。
+///
+/// 深色模式是浅色模式的严格反相，不是另一套色板。
 class IosColors {
   IosColors._();
 
   /// 当前是否深色模式，由 [IosApp] 根据「外观设置」和系统外观决定。
   static bool isDark = false;
 
-  static Color get bg => isDark ? dBg : const Color(0xFFF9F9FB);
+  static Color get bg => isDark ? dBg : const Color(0xFFF7F7F8);
   static Color get surface => isDark ? dSurface : const Color(0xFFFFFFFF);
-  static Color get ink => isDark ? dInk : const Color(0xFF222328);
-  static Color get muted => isDark ? dMuted : const Color(0xFF62636B);
-  static Color get faint => isDark ? dFaint : const Color(0xFFE9E9EE);
-  static Color get line => isDark ? dLine : const Color(0xFFE2E2E8);
-  static Color get accent => isDark ? dAccent : const Color(0xFF914638);
-  static Color get accentSoft => isDark ? const Color(0xFF45312D) : const Color(0xFFF3E9E5);
-  static Color get tab => isDark ? dMuted : const Color(0xFF5C5D65);
+  static Color get ink => isDark ? dInk : const Color(0xFF17181C);
+  static Color get muted => isDark ? dMuted : const Color(0xFF6C6D75);
+  static Color get faint => isDark ? dFaint : const Color(0xFFEFEFF1);
+  static Color get line => isDark ? dLine : const Color(0xFFE4E4E8);
 
-  /// 实心强调按钮上的文字：浅色模式白字，深色模式（浅色按钮）深字。
-  static Color get onAccent => isDark ? const Color(0xFF291C18) : const Color(0xFFFFFFFF);
+  /// 强调 = 主文字色。不再有独立色相，详见类注释。
+  static Color get accent => ink;
 
-  static const dBg = Color(0xFF15161A);
-  static const dSurface = Color(0xFF25262C);
-  static const dInk = Color(0xFFF5F5F7);
-  static const dMuted = Color(0xFFB5B5C0);
-  static const dLine = Color(0xFF45454D);
-  static const dFaint = Color(0xFF35363E);
-  static const dAccent = Color(0xFFF1B4A4);
+  /// 需要在深色块（例如封面上的角标）上写字时用它。
+  static Color get accentSoft => faint;
+  static Color get tab => isDark ? dMuted : const Color(0xFF5A5B62);
+
+  /// 实心按钮上的文字：浅色模式黑底白字，深色模式白底黑字。
+  static Color get onAccent => isDark ? const Color(0xFF16171A) : const Color(0xFFFFFFFF);
+
+  /// 反相块（选中项、实心按钮）的底色。
+  static Color get invert => isDark ? const Color(0xFFF2F2F4) : const Color(0xFF17181C);
+
+  static const dBg = Color(0xFF111214);
+  static const dSurface = Color(0xFF1D1E21);
+  static const dInk = Color(0xFFF4F4F6);
+  static const dMuted = Color(0xFF9C9DA5);
+  static const dLine = Color(0xFF2E2F34);
+  static const dFaint = Color(0xFF242529);
 }
 
 /// 系统栏：状态栏和 Android 导航栏都透明，内容画到后面。浅色页面用深色图标。
@@ -301,7 +315,7 @@ class LargeTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 16, 6),
+        padding: const EdgeInsets.fromLTRB(Space.page, Space.x2, Space.page - 4, Space.x1),
         child: SizedBox(
           height: 54,
           child: Row(children: [
@@ -311,15 +325,19 @@ class LargeTitle extends StatelessWidget {
                 child: Text(title, style: TextStyle(fontSize: 34, height: 1.15, fontWeight: FontWeight.w700, letterSpacing: -.4, color: IosColors.ink)),
               ),
             ),
-            for (final t in trailing) ...[const SizedBox(width: 8), t],
+            for (final t in trailing) ...[const SizedBox(width: Space.x2), t],
           ]),
         ),
       );
 }
 
-/// 系统风格的分段控件。
+/// 柔和分段控件：整宽轨道 + 会滑动的选中块，没有分段之间的竖线和硬边。
+///
+/// 不用 `CupertinoSlidingSegmentedControl`：它的选中块是方角、分段之间有
+/// 系统处理的分隔线，放在「人气排行」标题下显得很硬。这里选中块是圆角、
+/// 220ms 滑动过去，只靠底色和字重区分。
 class IosSegmented extends StatelessWidget {
-  const IosSegmented({super.key, required this.options, required this.selected, required this.onChanged, this.dark = false, this.counts});
+  const IosSegmented({super.key, required this.options, required this.selected, required this.onChanged, this.dark = false, this.counts, this.compact = false});
 
   final List<String> options;
   final int selected;
@@ -327,38 +345,116 @@ class IosSegmented extends StatelessWidget {
   final bool dark;
   final List<int?>? counts;
 
+  /// 紧凑版：高度 36、字号 13，用在区块标题右侧那种一行放得下的位置。
+  final bool compact;
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: double.infinity,
-        child: CupertinoSlidingSegmentedControl<int>(
-          groupValue: selected,
-          backgroundColor: dark ? IosColors.dFaint : IosColors.faint,
-          thumbColor: dark ? const Color(0xFF55565E) : IosColors.surface,
-          padding: const EdgeInsets.all(3),
-          onValueChanged: (v) {
-            if (v == null) return;
-            HapticFeedback.selectionClick();
-            onChanged(v);
-          },
-          children: {
-            for (var i = 0; i < options.length; i++)
-              i: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text.rich(
-                  TextSpan(children: [
-                    TextSpan(text: options[i]),
-                    if (counts != null && counts![i] != null)
-                      TextSpan(text: '  ${counts![i]}', style: TextStyle(fontWeight: FontWeight.w400, color: dark ? IosColors.dMuted : IosColors.muted)),
-                  ]),
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
-                    color: dark ? IosColors.dInk : IosColors.ink,
+  Widget build(BuildContext context) {
+    final h = compact ? 36.0 : 40.0;
+    final r = BorderRadius.circular(compact ? 11 : 12);
+    return Container(
+      height: h,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(color: IosColors.faint, borderRadius: r),
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final w = c.maxWidth / options.length;
+          return Stack(
+            children: [
+              AnimatedPositioned(
+                duration: Motion.of(context, 220),
+                curve: Motion.ease,
+                left: w * selected,
+                top: 0,
+                bottom: 0,
+                width: w,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: IosColors.surface,
+                    borderRadius: BorderRadius.circular((compact ? 11 : 12) - 3),
+                    boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 4, offset: Offset(0, 1))],
                   ),
                 ),
               ),
-          },
+              Row(
+                children: [
+                  for (var i = 0; i < options.length; i++)
+                    Expanded(
+                      child: Pressable(
+                        haptic: true,
+                        pressedScale: .98,
+                        onTap: () {
+                          if (i != selected) onChanged(i);
+                        },
+                        child: Center(
+                          child: Text.rich(
+                            TextSpan(children: [
+                              TextSpan(text: options[i]),
+                              if (counts != null && i < counts!.length && counts![i] != null)
+                                TextSpan(text: '  ${counts![i]}', style: TextStyle(fontWeight: FontWeight.w400, color: IosColors.muted)),
+                            ]),
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: compact ? 13 : 14,
+                              fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                              color: i == selected ? IosColors.ink : IosColors.muted,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 反相开关：关是发丝轨 + 圆点，开是实心主文字色轨 + 反相圆点。
+///
+/// 不用 `CupertinoSwitch`：那个必须给一个色相当轨道色，而全 App 已经没有
+/// 色相了；安卓用户看到 iOS 的开关也会觉得不是自己系统的件。
+class AppSwitch extends StatelessWidget {
+  const AppSwitch({super.key, required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  static const _w = 50.0;
+  static const _h = 31.0;
+  static const _knob = 27.0;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+        onTap: onChanged == null ? null : () => onChanged!(!value),
+        semanticLabel: value ? '已开启' : '已关闭',
+        child: AnimatedContainer(
+          duration: Motion.of(context, 200),
+          curve: Motion.ease,
+          width: _w,
+          height: _h,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: value ? IosColors.invert : IosColors.faint,
+            borderRadius: BorderRadius.circular(_h / 2),
+          ),
+          child: AnimatedAlign(
+            duration: Motion.of(context, 200),
+            curve: Motion.ease,
+            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: _knob,
+              height: _knob,
+              decoration: BoxDecoration(
+                color: value ? IosColors.onAccent : IosColors.surface,
+                shape: BoxShape.circle,
+                boxShadow: const [BoxShadow(color: Color(0x1F000000), blurRadius: 3, offset: Offset(0, 1))],
+              ),
+            ),
+          ),
         ),
       );
 }
@@ -440,9 +536,11 @@ class TextChips extends StatelessWidget {
         height: 44,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          // 首尾用 [Space.page]，和标题、列表、网格落在同一条左边缘线，
+          // 也保证划到尽头时最后一个胶囊距右边同样是 page。
+          padding: const EdgeInsets.symmetric(horizontal: Space.page),
           itemCount: items.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 4),
+          separatorBuilder: (_, _) => const SizedBox(width: Space.x2),
           itemBuilder: (context, i) {
             final (label, count, dot) = items[i];
             final on = i == selected;
@@ -451,13 +549,15 @@ class TextChips extends StatelessWidget {
               onTap: () => onSelect(i),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
+                // 胶囊左右各多 1px，页面有 4 的负向修正时也不会看起来偏。
                 padding: const EdgeInsets.symmetric(horizontal: 13),
+                // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。
                 decoration: BoxDecoration(color: on ? IosColors.faint : Colors.transparent, borderRadius: BorderRadius.circular(18)),
                 child: Center(
                   widthFactor: 1,
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     if (dot) ...[
-                      Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.accent, shape: BoxShape.circle)),
+                      Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.ink, shape: BoxShape.circle)),
                       const SizedBox(width: 6),
                     ],
                     Text(label, style: TextStyle(fontSize: 15, color: on ? IosColors.ink : IosColors.muted, fontWeight: on ? FontWeight.w600 : FontWeight.w400)),
@@ -474,7 +574,7 @@ class TextChips extends StatelessWidget {
       );
 }
 
-/// 区块标题：20pt 粗体 + 计数 + 右侧暖棕文字按钮。
+/// 区块标题：21pt 粗体 + 计数 + 右侧文字按钮。
 class IosSection extends StatelessWidget {
   const IosSection(this.title, {super.key, this.count, this.action, this.onAction, this.actionIcon = 'right', this.note});
 
@@ -487,11 +587,11 @@ class IosSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 26, 16, 10),
+        padding: const EdgeInsets.fromLTRB(Space.page, Space.beforeSection, Space.page - 4, Space.afterSection),
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Text(title, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
           if (count != null) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: Space.x2),
             Text(count!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
           ],
           const Spacer(),
@@ -502,9 +602,9 @@ class IosSection extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(action!, style: TextStyle(fontSize: 15, color: IosColors.accent)),
+                  Text(action!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
                   const SizedBox(width: 2),
-                  AppIcon(actionIcon, size: 14, color: IosColors.accent, stroke: 2),
+                  AppIcon(actionIcon, size: 14, color: IosColors.muted, stroke: 2),
                 ]),
               ),
             ),
@@ -524,11 +624,13 @@ class InsetGroup extends StatelessWidget {
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (title != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(36, 22, 20, 7),
+            // 分组标题和卡片内容同一条 page 边线，不再用 36 那种「再缩进一层」
+            // 的做法——那会让「偏好设置」和下面每一行都对不上。
+            padding: const EdgeInsets.fromLTRB(Space.page + Space.x4, Space.beforeSection, Space.page, Space.x2),
             child: Text(title!, style: TextStyle(fontSize: 13, color: IosColors.muted)),
           ),
         Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20),
+          margin: const EdgeInsets.symmetric(horizontal: Space.page),
           decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
           clipBehavior: Clip.antiAlias,
           child: Column(children: [
@@ -541,7 +643,7 @@ class InsetGroup extends StatelessWidget {
         ),
         if (footer != null)
           Padding(
-            padding: const EdgeInsets.fromLTRB(36, 7, 32, 0),
+            padding: const EdgeInsets.fromLTRB(Space.page + Space.x4, Space.x2, Space.page + Space.x4, 0),
             child: Text(footer!, style: TextStyle(fontSize: 13, height: 1.45, color: IosColors.muted)),
           ),
       ]);
@@ -632,33 +734,46 @@ class AccentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Pressable(
         onTap: onTap,
+        haptic: true,
         child: Container(
           height: 46,
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: BoxDecoration(color: IosColors.accent, borderRadius: BorderRadius.circular(23)),
+          // 实心反相：浅色下黑底白字，深色下白底黑字。全 App 唯一的「主操作」。
+          decoration: BoxDecoration(color: IosColors.invert, borderRadius: BorderRadius.circular(23)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Text(label, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.onAccent)),
-            if (icon != null) ...[const SizedBox(width: 8), AppIcon(icon!, size: 18, color: IosColors.onAccent, stroke: 1.9)],
+            if (icon != null) ...[const SizedBox(width: Space.x2), AppIcon(icon!, size: 18, color: IosColors.onAccent, stroke: 1.9)],
           ]),
         ),
       );
 }
 
+/// 纯文字操作。默认是次要色，只有明确传入 `primary: true` 才用主文字色。
 class TextAction extends StatelessWidget {
-  const TextAction({super.key, required this.label, required this.onTap, this.color});
+  const TextAction({super.key, required this.label, required this.onTap, this.color, this.primary = false});
 
   final String label;
   final VoidCallback? onTap;
 
-  /// 默认强调色。
+  /// 显式指定颜色（例如「清除」这种要用主文字色强调的）。
   final Color? color;
+
+  /// 用主文字色 + 加粗，和 [color] 二选一。
+  final bool primary;
 
   @override
   Widget build(BuildContext context) => Pressable(
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
-          child: Text(label, style: TextStyle(fontSize: 17, color: color ?? IosColors.accent, fontWeight: FontWeight.w500)),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 17,
+              color: color ?? (primary ? IosColors.ink : IosColors.muted),
+              fontWeight: primary || color != null ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
         ),
       );
 }
@@ -754,28 +869,71 @@ class _ToastBodyState extends State<_ToastBody> with SingleTickerProviderStateMi
       );
 }
 
-/// 系统风格的单行输入提示框。
+/// 单行输入提示框。iOS 用 Cupertino 弹窗，安卓用 Material 弹窗——
+/// 安卓上弹一个 iOS 的系统输入框是很明显的「不是我的系统」的割裂感。
 Future<String?> showIosPrompt(BuildContext context, {required String title, String? message, String initial = '', String? placeholder, String confirm = '确定'}) {
   final input = TextEditingController(text: initial);
-  return showCupertinoDialog<String>(
-    context: context,
-    builder: (dialog) => CupertinoAlertDialog(
-      title: Text(title),
-      content: Column(children: [
-        if (message != null) Padding(padding: const EdgeInsets.only(top: 4, bottom: 10), child: Text(message)),
-        CupertinoTextField(controller: input, placeholder: placeholder, autofocus: true, clearButtonMode: OverlayVisibilityMode.editing),
-      ]),
-      actions: [
-        CupertinoDialogAction(onPressed: () => Navigator.pop(dialog), child: const Text('取消')),
-        CupertinoDialogAction(isDefaultAction: true, onPressed: () => Navigator.pop(dialog, input.text), child: Text(confirm)),
-      ],
-    ),
-  ).whenComplete(() => Future.delayed(const Duration(milliseconds: 400), input.dispose));
+  final onAndroid = defaultTargetPlatform == TargetPlatform.android;
+  final future = !onAndroid
+      ? showCupertinoDialog<String>(
+          context: context,
+          builder: (dialog) => CupertinoAlertDialog(
+            title: Text(title),
+            content: Column(children: [
+              if (message != null) Padding(padding: const EdgeInsets.only(top: 4, bottom: 10), child: Text(message)),
+              CupertinoTextField(controller: input, placeholder: placeholder, autofocus: true, clearButtonMode: OverlayVisibilityMode.editing),
+            ]),
+            actions: [
+              CupertinoDialogAction(onPressed: () => Navigator.pop(dialog), child: const Text('取消')),
+              CupertinoDialogAction(isDefaultAction: true, onPressed: () => Navigator.pop(dialog, input.text), child: Text(confirm)),
+            ],
+          ),
+        )
+      : showDialog<String>(
+          context: context,
+          builder: (dialog) => Theme(
+            // 对话框也要吃全 App 的黑白主题，不能让 Material 默认的紫色飘进来。
+            data: buildAppTheme().copyWith(platform: TargetPlatform.android),
+            child: AlertDialog(
+              backgroundColor: IosColors.surface,
+              surfaceTintColor: Colors.transparent,
+              title: Text(title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                if (message != null) ...[
+                  Text(message, style: TextStyle(fontSize: 14, height: 1.5, color: IosColors.muted)),
+                  const SizedBox(height: Space.x3),
+                ],
+                TextField(
+                  controller: input,
+                  autofocus: true,
+                  style: TextStyle(fontSize: 16, color: IosColors.ink),
+                  decoration: InputDecoration(
+                    hintText: placeholder,
+                    hintStyle: TextStyle(fontSize: 16, color: IosColors.muted),
+                    filled: true,
+                    fillColor: IosColors.faint,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+              ]),
+              actionsPadding: const EdgeInsets.fromLTRB(Space.x2, 0, Space.x2, Space.x2),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialog), child: Text('取消', style: TextStyle(fontSize: 15, color: IosColors.muted))),
+                TextButton(onPressed: () => Navigator.pop(dialog, input.text), child: Text(confirm, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink))),
+              ],
+            ),
+          ),
+        );
+  return future.whenComplete(() => Future.delayed(const Duration(milliseconds: 400), input.dispose));
 }
 
-/// 系统风格的选择表（操作表）。返回选中的下标，取消返回 null。
-Future<int?> showIosChoices(BuildContext context, {String? title, required List<String> options, int? selected, int? destructiveIndex}) =>
-    showCupertinoModalPopup<int>(
+/// 选择表（操作表）。返回选中的下标，取消返回 null。
+/// iOS 用系统操作表，安卓用底部面板 + 列表，两端都不弹对方的件。
+Future<int?> showIosChoices(BuildContext context, {String? title, required List<String> options, int? selected, int? destructiveIndex}) {
+  if (defaultTargetPlatform != TargetPlatform.android) {
+    return showCupertinoModalPopup<int>(
       context: context,
       builder: (sheet) => CupertinoActionSheet(
         title: title == null ? null : Text(title),
@@ -791,3 +949,105 @@ Future<int?> showIosChoices(BuildContext context, {String? title, required List<
         cancelButton: CupertinoActionSheetAction(onPressed: () => Navigator.pop(sheet), child: const Text('取消')),
       ),
     );
+  }
+  return showAppSheet<int>(
+    context,
+    (sheet) => Material(
+      type: MaterialType.transparency,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(Space.page, 0, Space.page, MediaQuery.paddingOf(sheet).bottom + Space.x2),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(
+            decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
+            clipBehavior: Clip.antiAlias,
+            child: Column(children: [
+              if (title != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(Space.x4, Space.x4, Space.x4, Space.x2),
+                  child: Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: IosColors.muted)),
+                ),
+              for (var i = 0; i < options.length; i++) ...[
+                if (i > 0) Divider(height: .5, thickness: .5, color: IosColors.line),
+                Pressable(
+                  onTap: () => Navigator.pop(sheet, i),
+                  child: Container(
+                    height: 52,
+                    alignment: Alignment.center,
+                    child: Text(
+                      options[i],
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                        color: i == destructiveIndex ? IosColors.ink : (i == selected ? IosColors.ink : IosColors.ink),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ]),
+          ),
+          const SizedBox(height: Space.x2),
+          Pressable(
+            onTap: () => Navigator.pop(sheet),
+            child: Container(
+              height: 54,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
+              child: Text('取消', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.muted)),
+            ),
+          ),
+        ]),
+      ),
+    ),
+  );
+}
+
+/// 确认对话框（两三个按钮）。iOS 用 Cupertino，安卓用 Material。
+Future<bool> showAppConfirm(
+  BuildContext context, {
+  required String title,
+  String? message,
+  String confirm = '确定',
+  String cancel = '取消',
+  bool destructive = false,
+}) async {
+  final onAndroid = defaultTargetPlatform == TargetPlatform.android;
+  final r = !onAndroid
+      ? await showCupertinoDialog<bool>(
+          context: context,
+          builder: (dialog) => CupertinoAlertDialog(
+            title: Text(title),
+            content: message == null ? null : Text(message),
+            actions: [
+              CupertinoDialogAction(onPressed: () => Navigator.pop(dialog, false), child: Text(cancel)),
+              CupertinoDialogAction(
+                isDefaultAction: !destructive,
+                isDestructiveAction: destructive,
+                onPressed: () => Navigator.pop(dialog, true),
+                child: Text(confirm),
+              ),
+            ],
+          ),
+        )
+      : await showDialog<bool>(
+          context: context,
+          builder: (dialog) => Theme(
+            data: buildAppTheme().copyWith(platform: TargetPlatform.android),
+            child: AlertDialog(
+              backgroundColor: IosColors.surface,
+              surfaceTintColor: Colors.transparent,
+              title: Text(title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: IosColors.ink)),
+              content: message == null ? null : Text(message, style: TextStyle(fontSize: 14, height: 1.5, color: IosColors.muted)),
+              actionsPadding: const EdgeInsets.fromLTRB(Space.x2, 0, Space.x2, Space.x2),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialog, false), child: Text(cancel, style: TextStyle(fontSize: 15, color: IosColors.muted))),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialog, true),
+                  child: Text(confirm, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                ),
+              ],
+            ),
+          ),
+        );
+  return r ?? false;
+}

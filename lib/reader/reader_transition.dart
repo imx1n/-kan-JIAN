@@ -65,8 +65,16 @@ class ReaderTransition extends StatelessWidget {
         ),
       ),
     );
-    // 条漫里上下留白更大，卡片不贴着上一页的图。
-    return continuous ? Padding(padding: const EdgeInsets.symmetric(vertical: 48), child: box) : box;
+    // 纵向阅读里上下留白更大，卡片不贴着上一页的图。
+    //
+    // 连续列表里高度是无限的，`SizedBox.expand` 会直接断言失败，所以这里换成
+    // 按屏高分的一段；横向翻页仍然用整页。
+    if (!continuous) return box;
+    final h = MediaQuery.sizeOf(context).height * .62;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      child: SizedBox(height: h, width: double.infinity, child: box),
+    );
   }
 
   /// 全书读完。

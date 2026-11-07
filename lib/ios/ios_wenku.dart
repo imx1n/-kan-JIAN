@@ -119,18 +119,14 @@ class _IosWenkuPageState extends State<IosWenkuPage> {
   }
 
   Future<void> _logout() async {
-    final ok = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (dialog) => CupertinoAlertDialog(
-        title: const Text('退出登录？'),
-        content: const Text('只删除本机保存的登录凭证。已经同步到书架的作品和阅读位置会保留。'),
-        actions: [
-          CupertinoDialogAction(onPressed: () => Navigator.pop(dialog, false), child: const Text('取消')),
-          CupertinoDialogAction(isDestructiveAction: true, onPressed: () => Navigator.pop(dialog, true), child: const Text('退出')),
-        ],
-      ),
+    final ok = await showAppConfirm(
+      context,
+      title: '退出登录？',
+      message: '只删除本机保存的登录凭证。已经同步到书架的作品和阅读位置会保留。',
+      confirm: '退出',
+      destructive: true,
     );
-    if (ok == true) {
+    if (ok) {
       await _svc.logout();
       if (mounted) {
         setState(() {

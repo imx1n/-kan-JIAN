@@ -10,8 +10,8 @@ const kSampleCoverPrefix = 'sample:';
 
 /// 封面加载中和没有封面时的底色、书名颜色，随主题深浅变化。
 bool _darkTheme(BuildContext context) => Theme.of(context).brightness == Brightness.dark;
-Color _coverTonal(BuildContext context) => _darkTheme(context) ? const Color(0xFF35363E) : const Color(0xFFE5EDE6);
-Color _coverInk(BuildContext context) => _darkTheme(context) ? const Color(0xFFB5B5C0) : const Color(0xFF586767);
+Color _coverTonal(BuildContext context) => _darkTheme(context) ? const Color(0xFF26272B) : const Color(0xFFEFEFF1);
+Color _coverInk(BuildContext context) => _darkTheme(context) ? const Color(0xFF9C9DA5) : const Color(0xFF71727A);
 
 class CoverImage extends StatelessWidget {
   const CoverImage({

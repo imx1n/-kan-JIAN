@@ -1,8 +1,11 @@
 import 'package:flutter/cupertino.dart';
 
+import '../core/store.dart';
 import '../ios/ios_theme.dart';
 import '../ui/icons.dart';
+import '../ui/motion.dart';
 import 'mode_glyph.dart';
+import 'page_fit.dart';
 import 'reader_theme.dart';
 import 'reading_mode.dart';
 
@@ -80,7 +83,7 @@ class ReaderTopBar extends StatelessWidget {
 /// 结构：把手 + 可滚动的设置组 + 固定在底部的「完成」。组标题 16/w600、
 /// 说明 13/muted，阅读方式是一排 66 的图标瓦片（[ModeGlyph] 三色纸页），
 /// 点击区域和画质用胶囊，预加载与亮度共用带刻度的细轨滑块。
-class ReaderSettingsSheet extends StatelessWidget {
+class ReaderSettingsSheet extends StatefulWidget {
   const ReaderSettingsSheet({
     super.key,
     required this.mode,
@@ -125,11 +128,42 @@ class ReaderSettingsSheet extends StatelessWidget {
   static const _stripHeight = ReaderPalette.tile + ReaderPalette.tileGap + 18 + 3;
 
   @override
+  State<ReaderSettingsSheet> createState() => _ReaderSettingsSheetState();
+}
+
+/// 面板自己持有一份设置副本。
+///
+/// 之前它是 `StatelessWidget`，选中态全靠外层 `setState` 传进来——每点一下
+/// 都要走「回调 → 写偏好 → 通知 → 阅读页整树重建 → 面板重建」这一整圈，
+/// 面板的高亮和描边要等这一圈走完才开始动，看上去就是点了没反应。
+/// 现在点击立刻改本地状态、同一帧就出动画，外层只负责持久化。
+class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
+  late ReadingMode _mode = widget.mode;
+  late int _prefetch = widget.prefetch;
+  late int _area = widget.area;
+  late bool _saver = widget.saver;
+  late PageFit _fit = PageFit.fromValue(ReaderPrefs.instance.mangaFit);
+
+  /// 亮度单独走通知器。
+  ///
+  /// 拖滑块每帧都在变，如果走 `setState`，整个面板（6 个 SVG 瓦片 + 所有文字）
+  /// 每帧重建一次，滑动就发涩。现在只有滑块和右侧百分比跟着重建。
+  late final _brightness = ValueNotifier<double>(widget.brightness);
+
+  @override
+  void dispose() {
+    _brightness.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final pad = MediaQuery.paddingOf(context);
     final screenH = MediaQuery.sizeOf(context).height;
     // 顶部至少留 120 给阅读页，同时不超过屏高 90%。
-    final maxH = (screenH - pad.top - 120).clamp(0.0, screenH * .90);
+    // 面板最多占屏高 62%：上方留出足够高度让当前页留在视野里，
+    // 打开设置时看到的是「盖在阅读页上的面板」，而不是一整块灰。
+    final maxH = (screenH - pad.top - 160).clamp(0.0, screenH * .62);
     const shape = BorderRadius.vertical(top: Radius.circular(ReaderPalette.sheetRadius));
 
     return Container(
@@ -167,7 +201,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                           caption: '条漫是连续上下滚动；单页可以横向或纵向翻页。',
                           gap: 10,
                           child: SizedBox(
-                            height: _stripHeight,
+                            height: ReaderSettingsSheet._stripHeight,
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
                               clipBehavior: Clip.none,
@@ -176,8 +210,13 @@ class ReaderSettingsSheet extends StatelessWidget {
                               separatorBuilder: (_, _) => const SizedBox(width: ReaderPalette.tileStripGap),
                               itemBuilder: (context, i) => _ModeTile(
                                 mode: ReadingMode.values[i],
-                                selected: ReadingMode.values[i] == mode,
-                                onTap: () => onMode(ReadingMode.values[i]),
+                                selected: ReadingMode.values[i] == _mode,
+                                onTap: () {
+                                  if (ReadingMode.values[i] == _mode) return;
+                                  // 先改本地状态：同一帧里描边和对勾就开始动。
+                                  setState(() => _mode = ReadingMode.values[i]);
+                                  widget.onMode(ReadingMode.values[i]);
+                                },
                               ),
                             ),
                           ),
@@ -191,19 +230,24 @@ class ReaderSettingsSheet extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: _StepSlider(
-                                  value: prefetch.toDouble().clamp(_prefetchMin.toDouble(), _prefetchMax.toDouble()),
-                                  min: _prefetchMin.toDouble(),
-                                  max: _prefetchMax.toDouble(),
-                                  ticks: _prefetchMax - _prefetchMin + 1,
+                                  value: _prefetch.toDouble().clamp(ReaderSettingsSheet._prefetchMin.toDouble(), ReaderSettingsSheet._prefetchMax.toDouble()),
+                                  min: ReaderSettingsSheet._prefetchMin.toDouble(),
+                                  max: ReaderSettingsSheet._prefetchMax.toDouble(),
+                                  ticks: ReaderSettingsSheet._prefetchMax - ReaderSettingsSheet._prefetchMin + 1,
                                   snap: true,
-                                  onChanged: (v) => onPrefetch(v.round()),
+                                  onChanged: (v) {
+                                    final n = v.round();
+                                    if (n == _prefetch) return;
+                                    setState(() => _prefetch = n);
+                                    widget.onPrefetch(n);
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 16),
                               SizedBox(
                                 width: 40,
                                 child: Text(
-                                  '$prefetch 页',
+                                  '$_prefetch 页',
                                   textAlign: TextAlign.right,
                                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ReaderPalette.text, fontFeatures: const [FontFeature.tabularFigures()]),
                                 ),
@@ -221,15 +265,49 @@ class ReaderSettingsSheet extends StatelessWidget {
                             clipBehavior: Clip.none,
                             child: Row(
                               children: [
-                                for (var i = 0; i < _areaNames.length; i++) ...[
+                                for (var i = 0; i < ReaderSettingsSheet._areaNames.length; i++) ...[
                                   if (i > 0) const SizedBox(width: 6),
-                                  ReaderPill(label: _areaNames[i], selected: area == i, onTap: () => onArea(i)),
+                                  ReaderPill(
+                                    label: ReaderSettingsSheet._areaNames[i],
+                                    selected: _area == i,
+                                    onTap: () {
+                                      if (_area == i) return;
+                                      setState(() => _area = i);
+                                      widget.onArea(i);
+                                    },
+                                  ),
                                 ],
                               ],
                             ),
                           ),
                         ),
-                        if (onSaver != null) ...[
+                        const SizedBox(height: 12),
+                        _group(
+                          title: '图片适配',
+                          caption: '纵向阅读建议「适应宽度」，页面会首尾相接、不留白边。',
+                          gap: 9,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            child: Row(
+                              children: [
+                                for (var i = 0; i < PageFit.values.length; i++) ...[
+                                  if (i > 0) const SizedBox(width: 6),
+                                  ReaderPill(
+                                    label: PageFit.values[i].label,
+                                    selected: _fit == PageFit.values[i],
+                                    onTap: () {
+                                      if (_fit == PageFit.values[i]) return;
+                                      setState(() => _fit = PageFit.values[i]);
+                                      ReaderPrefs.instance.mangaFit = PageFit.values[i].value;
+                                    },
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (widget.onSaver != null) ...[
                           const SizedBox(height: 12),
                           _group(
                             title: '图片画质',
@@ -237,40 +315,66 @@ class ReaderSettingsSheet extends StatelessWidget {
                             gap: 9,
                             child: Row(
                               children: [
-                                ReaderPill(label: '省流', minWidth: 57, check: true, selected: saver, onTap: () => onSaver!(true)),
+                                ReaderPill(
+                                  label: '省流',
+                                  minWidth: 57,
+                                  check: true,
+                                  selected: _saver,
+                                  onTap: () {
+                                    if (_saver) return;
+                                    setState(() => _saver = true);
+                                    widget.onSaver!(true);
+                                  },
+                                ),
                                 const SizedBox(width: 6),
-                                ReaderPill(label: '标准', minWidth: 57, check: true, selected: !saver, onTap: () => onSaver!(false)),
+                                ReaderPill(
+                                  label: '标准',
+                                  minWidth: 57,
+                                  check: true,
+                                  selected: !_saver,
+                                  onTap: () {
+                                    if (!_saver) return;
+                                    setState(() => _saver = false);
+                                    widget.onSaver!(false);
+                                  },
+                                ),
                               ],
                             ),
                           ),
                         ],
-                        if (onBrightness != null) ...[
+                        if (widget.onBrightness != null) ...[
                           const SizedBox(height: 12),
                           _group(
                             title: '页面亮度',
                             caption: '只压暗画面，不改系统亮度；适合关灯看。',
                             gap: 0,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: _StepSlider(
-                                    value: brightness.clamp(.3, 1.0),
-                                    min: .3,
-                                    max: 1,
-                                    ticks: 8,
-                                    onChanged: (v) => onBrightness!(v),
+                            child: ValueListenableBuilder<double>(
+                              valueListenable: _brightness,
+                              builder: (context, b, _) => Row(
+                                children: [
+                                  Expanded(
+                                    child: _StepSlider(
+                                      value: b.clamp(.3, 1.0),
+                                      min: .3,
+                                      max: 1,
+                                      ticks: 8,
+                                      onChanged: (v) {
+                                        _brightness.value = v;
+                                        widget.onBrightness!(v);
+                                      },
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 16),
-                                SizedBox(
-                                  width: 40,
-                                  child: Text(
-                                    '${(brightness * 100).round()}%',
-                                    textAlign: TextAlign.right,
-                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ReaderPalette.text, fontFeatures: const [FontFeature.tabularFigures()]),
+                                  const SizedBox(width: 16),
+                                  SizedBox(
+                                    width: 40,
+                                    child: Text(
+                                      '${(b * 100).round()}%',
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ReaderPalette.text, fontFeatures: const [FontFeature.tabularFigures()]),
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -282,7 +386,7 @@ class ReaderSettingsSheet extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.fromLTRB(22, 8, 22, pad.bottom + 16),
                   child: Pressable(
-                    onTap: onClose,
+                    onTap: widget.onClose,
                     haptic: true,
                     child: Container(
                       height: 44,
@@ -335,21 +439,35 @@ class _ModeTile extends StatelessWidget {
             SizedBox(
               width: ReaderPalette.tile,
               height: ReaderPalette.tile,
-              child: DecoratedBox(
+              // 底色和描边都过渡：点下去是「逐渐描上边」而不是瞬间出现一个框。
+              // 描边宽度不能动画（会重排），所以固定 1.5，只动颜色。
+              child: AnimatedContainer(
+                duration: Motion.of(context, 180),
+                curve: Motion.ease,
+                // 图标控件用描边：图标本身有纸页层次，反相会把层次压平。
                 decoration: BoxDecoration(
                   color: selected ? ReaderPalette.selected : ReaderPalette.surface,
                   borderRadius: BorderRadius.circular(ReaderPalette.tileRadius),
-                  border: Border.all(color: selected ? ReaderPalette.selectedLine : const Color(0x00000000)),
+                  border: Border.all(color: selected ? ReaderPalette.selectedLine : const Color(0x00000000), width: ReaderPalette.selectedStroke),
                 ),
                 child: Stack(
                   children: [
                     Center(child: ModeGlyph(mode: mode, selected: selected, size: ReaderPalette.tileGlyph)),
-                    if (selected)
-                      Positioned(
-                        top: 5,
-                        right: 5,
-                        child: AppIcon('check', size: 11, stroke: 2.2, color: ReaderPalette.selectedInk),
+                    // 对勾用缩放 + 淡入，和描边同时到位。
+                    Positioned(
+                      top: 5,
+                      right: 5,
+                      child: AnimatedScale(
+                        scale: selected ? 1 : .6,
+                        duration: Motion.of(context, 180),
+                        curve: Motion.ease,
+                        child: AnimatedOpacity(
+                          opacity: selected ? 1 : 0,
+                          duration: Motion.of(context, 140),
+                          child: AppIcon('check', size: 11, stroke: 2.2, color: ReaderPalette.selectedInk),
+                        ),
                       ),
+                    ),
                   ],
                 ),
               ),
@@ -357,19 +475,23 @@ class _ModeTile extends StatelessWidget {
             const SizedBox(height: ReaderPalette.tileGap),
             SizedBox(
               height: 18,
-              child: Text(
-                mode.shortLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                // 这一行是固定 18 高的度量标签（设计稿 12/18），跟随系统字号会被
-                // 撑到 19 而溢出 1px，所以按设计稿锁死不缩放。
-                textScaler: TextScaler.noScaling,
+              child: AnimatedDefaultTextStyle(
+                duration: Motion.of(context, 180),
+                curve: Motion.ease,
                 style: TextStyle(
                   fontSize: ReaderPalette.tileLabel,
                   height: 18 / ReaderPalette.tileLabel,
                   fontWeight: FontWeight.w500,
                   color: selected ? ReaderPalette.selectedInk : ReaderPalette.muted,
+                ),
+                child: Text(
+                  mode.shortLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  // 这一行是固定 18 高的度量标签（设计稿 12/18），跟随系统字号会被
+                  // 撑到 19 而溢出 1px，所以按设计稿锁死不缩放。
+                  textScaler: TextScaler.noScaling,
                 ),
               ),
             ),
@@ -390,23 +512,27 @@ class ReaderPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(
-      label,
-      maxLines: 1,
-      softWrap: false,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 13, height: 22 / 13, fontWeight: FontWeight.w500, color: selected ? ReaderPalette.selectedInk : ReaderPalette.text),
-    );
-    final box = Container(
+    final text = Text(label, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis);
+    // 反相是一次底色渐变，不是瞬间翻转——后者在「画质 / 点击区域」这种
+    // 两三个选项并排时会有明显的闪。
+    final box = AnimatedContainer(
+      duration: Motion.of(context, 180),
+      curve: Motion.ease,
       constraints: BoxConstraints(minHeight: ReaderPalette.choiceHeight, minWidth: minWidth),
       padding: EdgeInsets.fromLTRB(12, 10, check && selected ? 24 : 12, 10),
       alignment: Alignment.center,
+      // 文字控件用反相：选中 = 实心主文字色 + 底色文字。没有色相可用时，
+      // 这是唯一能在浅色和深色下都保持最高对比的做法。
       decoration: BoxDecoration(
-        color: selected ? ReaderPalette.selected : ReaderPalette.surface,
+        color: selected ? ReaderPalette.invert : ReaderPalette.surface,
         borderRadius: BorderRadius.circular(ReaderPalette.choiceRadius),
-        border: Border.all(color: selected ? ReaderPalette.selectedLine : const Color(0x00000000)),
       ),
-      child: text,
+      child: AnimatedDefaultTextStyle(
+        duration: Motion.of(context, 180),
+        curve: Motion.ease,
+        style: TextStyle(fontSize: 13, height: 22 / 13, fontWeight: FontWeight.w500, color: selected ? ReaderPalette.onInvert : ReaderPalette.text),
+        child: text,
+      ),
     );
     return Pressable(
       onTap: onTap,
@@ -419,7 +545,11 @@ class ReaderPill extends StatelessWidget {
                   Positioned(
                     top: 16,
                     right: 7,
-                    child: AppIcon('check', size: 10, stroke: 2.2, color: ReaderPalette.selectedInk),
+                    child: AnimatedOpacity(
+                      opacity: selected ? 1 : 0,
+                      duration: Motion.of(context, 160),
+                      child: AppIcon('check', size: 10, stroke: 2.2, color: ReaderPalette.onInvert),
+                    ),
                   ),
               ],
             )

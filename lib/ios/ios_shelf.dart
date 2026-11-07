@@ -9,6 +9,7 @@ import '../core/wenku.dart';
 import '../ui/format.dart' show formatDay;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show Dock, Space;
 import '../ui/widgets.dart' show CoverImage;
 import 'ios_app.dart';
 import 'ios_search.dart';
@@ -100,6 +101,9 @@ class _IosShelfPageState extends State<IosShelfPage> {
     final visible = [for (final e in all) if (_match(e)) e];
     final updates = [for (final e in all) if (e.hasUpdate) e];
     final resume = visible.where((e) => e.started).firstOrNull;
+    // 「最近在读」已经在上面用大卡片展示过，藏书网格里就不再出现第二遍。
+    // 同一本书两个尺寸、两种封面呈现方式并排摆着，视觉上非常撕裂。
+    final gridItems = [for (final e in visible) if (!identical(e, resume)) e];
     final top = MediaQuery.paddingOf(context).top;
     return CustomScrollView(
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
@@ -125,7 +129,7 @@ class _IosShelfPageState extends State<IosShelfPage> {
           SliverToBoxAdapter(
             child: IosSection(
               '我的藏书',
-              count: '${visible.length}',
+              count: '${gridItems.length}',
               action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
               actionIcon: 'down',
               onAction: () async {
@@ -134,27 +138,29 @@ class _IosShelfPageState extends State<IosShelfPage> {
               },
             ),
           ),
-          if (visible.isEmpty)
+          // 只有一本、而且正好是「最近在读」时，网格是空的——这时不显示空态文案，
+          // 上方那张续读卡片已经是完整的入口。
+          if (gridItems.isEmpty && visible.isEmpty)
             SliverToBoxAdapter(child: _FilterEmpty(novel: _filter == _Filter.novel, updated: _filter == _Filter.updated))
-          else
+          else if (gridItems.isNotEmpty)
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: Space.page),
               sliver: SliverGrid.builder(
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 18,
+                  crossAxisSpacing: Space.x3 + 2,
+                  mainAxisSpacing: Space.x4 + 2,
                   // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
                   // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
                   mainAxisExtent:
-                      (MediaQuery.sizeOf(context).width - 40 - 28) / 3 * 4 / 3 + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
+                      (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
                 ),
-                itemCount: visible.length,
-                itemBuilder: (context, i) => _Tile(entry: visible[i], onLongPress: () => _entryMenu(visible[i])),
+                itemCount: gridItems.length,
+                itemBuilder: (context, i) => _Tile(entry: gridItems[i], onLongPress: () => _entryMenu(gridItems[i])),
               ),
             ),
         ],
-        const SliverToBoxAdapter(child: SizedBox(height: 130)),
+        SliverToBoxAdapter(child: SizedBox(height: Dock.clearance(context))),
       ],
     );
   }
