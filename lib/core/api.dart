@@ -267,6 +267,12 @@ class MangaApi {
   Future<PageResult<RemoteComic>> browsedComics(String token, {int offset = 0, int limit = 50}) async =>
       PageResult.parse(await _get('/api/v3/member/browse/comics', {'limit': limit, 'offset': offset}, token), RemoteComic.fromJson);
 
+  /// 带登录凭证请求一次章节内容，源站据此把这一话记进账号的浏览历史（多设备同步靠它）。
+  /// 只为上报，不用返回的内容；凭证失效抛 [AuthExpired]。
+  Future<void> reportRead(String pathWord, String uuid, String token) async {
+    await _get('/api/v3/comic/$pathWord/chapter/$uuid', const {}, token);
+  }
+
   /// 用最新列表接口测一次连通性，返回耗时。
   Future<Duration> ping() async {
     final sw = Stopwatch()..start();

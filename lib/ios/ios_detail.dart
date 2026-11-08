@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/account.dart';
 import '../core/api.dart';
 import '../core/chapter_browser.dart';
 import '../core/models.dart';
@@ -76,6 +77,8 @@ class _IosDetailPageState extends State<IosDetailPage> {
       _pendingLocate = e?.chapterIndex != null;
       setState(() => _detail = d);
       _browser.setGroups(d.groups, preferGroup: e?.group, locateIndex: e?.chapterIndex);
+      // 已登录：看看另一台设备是不是读到了别的话，是就把「继续阅读」接过去。
+      if (AccountService.instance.loggedIn) AccountService.instance.refreshComic(_pw).ignore();
     } catch (err) {
       if (mounted) setState(() => _error = err.toString());
     }

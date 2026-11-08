@@ -28,12 +28,12 @@ jobs:
       - run: flutter test
 
       - name: 构建（不签名）
-        run: flutter build ios --release --no-codesign
+        run: flutter build ios --release --no-codesign --dart-define=CI_RUN=${{ github.run_number }}
 
       - name: 打包 IPA
         run: |
           version=$(sed -n 's/^version: *\([0-9.]*\).*/\1/p' pubspec.yaml)
-          ipa="kanjian-v$version-unsigned.ipa"
+          ipa="kanjian-v$version-r${{ github.run_number }}-unsigned.ipa"
           mkdir -p build/ipa/Payload
           cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
           (cd build/ipa && zip -qry "../$ipa" Payload)

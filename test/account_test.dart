@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pastemangax/core/account.dart';
 import 'package:pastemangax/core/api.dart';
+import 'package:pastemangax/core/models.dart';
 import 'package:pastemangax/core/store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -98,6 +99,77 @@ void main() {
     await AccountService.instance.login('u', 'p');
     expect(AccountService.instance.loggedIn, isTrue);
     expect(fake.requests.any((r) => r.$1.uri.host == 'copy3000.com'), isTrue);
+  });
+
+  test('多设备：源站是另一话时，已上报的本机位置跟过去，未上报的保留，同一话保留页码', () async {
+    final store = LibraryStore.instance;
+    ShelfEntry mk(String id) => ShelfEntry(id: id, kind: ShelfKind.manga, name: id, cover: '', author: '', followed: false);
+    store.recordPosition(id: 'x', create: () => mk('x'), chapterUuid: 'x3', chapterName: '第3话', page: 4, pageCount: 20, progress: .2);
+    store.markReported('x', 'x3');
+    store.recordPosition(id: 'y', create: () => mk('y'), chapterUuid: 'y3', chapterName: '第3话', page: 4, pageCount: 20, progress: .2);
+    store.recordPosition(id: 'z', create: () => mk('z'), chapterUuid: 'z5', chapterName: '第5话', page: 7, pageCount: 20, progress: .4);
+    final r = store.mergeRemoteHistory([
+      (comic: ComicBrief.fromJson(_comic('x', 'X')), chapterId: 'x5', chapterName: '第5话'),
+      (comic: ComicBrief.fromJson(_comic('y', 'Y')), chapterId: 'y5', chapterName: '第5话'),
+      (comic: ComicBrief.fromJson(_comic('z', 'Z')), chapterId: 'z5', chapterName: '第5话'),
+    ]);
+    expect(r.updated, 1);
+    expect(r.filled, 0);
+    expect(store.entry('x')!.chapterUuid, 'x5');
+    expect(store.entry('x')!.page, 0);
+    expect(store.entry('x')!.reportedChapter, 'x5');
+    expect(store.entry('y')!.chapterUuid, 'y3');
+    expect(store.entry('y')!.page, 4);
+    expect(store.entry('z')!.page, 7);
+    expect(store.entry('z')!.reportedChapter, 'z5');
+  });
+
+  test('升级迁移：升级前的阅读位置视为已和源站对齐', () async {
+    SharedPreferences.setMockInitialValues({
+      'shelf.v1': jsonEncode([
+        {'id': 'o', 'kind': 'manga', 'name': 'O', 'chapterUuid': 'o2', 'chapterName': '第2话'},
+      ]),
+    });
+    await initStores();
+    expect(LibraryStore.instance.entry('o')!.reportedChapter, 'o2');
+  });
+
+  test('阅读上报：带凭证请求章节，成功后记为已上报，同一话只报一次', () async {
+    final fake = _FakeAdapter((o, body) {
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 't0k', 'username': 'u'}});
+      if (o.path.contains('/chapter/')) return (200, {'code': 200, 'results': {'chapter': <String, Object?>{}}});
+      return (200, _page(const []));
+    });
+    MangaApi.instance.adapter = fake;
+    await AccountService.instance.login('u', 'p');
+    final store = LibraryStore.instance;
+    store.recordPosition(id: 'k', create: () => ShelfEntry(id: 'k', kind: ShelfKind.manga, name: 'K', cover: '', author: '', followed: false), chapterUuid: 'k1', chapterName: '第1话', progress: .1);
+    await AccountService.instance.reportRead('k', 'k1');
+    await AccountService.instance.reportRead('k', 'k1');
+    final reports = fake.requests.where((r) => r.$1.path.contains('/comic/k/chapter/k1')).toList();
+    expect(reports, hasLength(1));
+    expect(reports.first.$1.headers['authorization'], 'Token t0k');
+    expect(store.entry('k')!.reportedChapter, 'k1');
+  });
+
+  test('详情页：浏览历史第一页里有这部作品，接上另一台设备的进度', () async {
+    var history = <Object?>[];
+    MangaApi.instance.adapter = _FakeAdapter((o, body) {
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 't', 'username': 'u'}});
+      if (o.path.contains('/member/browse/comics')) return (200, _page(history));
+      return (200, _page(const []));
+    });
+    await AccountService.instance.login('u', 'p');
+    final store = LibraryStore.instance;
+    store.recordPosition(id: 'd', create: () => ShelfEntry(id: 'd', kind: ShelfKind.manga, name: 'D', cover: '', author: '', followed: false), chapterUuid: 'd2', chapterName: '第2话', page: 3, pageCount: 10, progress: .4);
+    store.markReported('d', 'd2');
+    // 拷贝实测的结构：最后看的那一话平铺在条目上（comic 里的 last_chapter_id 是作品最新一话）。
+    history = [
+      {'comic': {..._comic('d', 'D'), 'last_chapter_id': 'latest', 'last_chapter_name': '第99话'}, 'last_chapter_id': 'd9', 'last_chapter_name': '第9话'},
+    ];
+    expect(await AccountService.instance.refreshComic('d'), isTrue);
+    expect(store.entry('d')!.chapterUuid, 'd9');
+    expect(store.entry('d')!.chapterName, '第9话');
   });
 
   test('同步：书架加入追更，历史只补本机没有的阅读位置', () async {

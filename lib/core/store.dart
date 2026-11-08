@@ -44,6 +44,7 @@ class ShelfEntry {
     this.latestCount = 0,
     this.seenCount = 0,
     this.followed = true,
+    this.reportedChapter,
     int? updatedAt,
   }) : updatedAt = updatedAt ?? DateTime.now().millisecondsSinceEpoch;
 
@@ -79,6 +80,10 @@ class ShelfEntry {
 
   /// 是否追更。只读过、没点追更的作品只保留阅读位置。
   bool followed;
+
+  /// 本机已上报到源站（或已和源站对齐）的那一话，多设备同步用：
+  /// 和 [chapterUuid] 相同表示本机位置源站已知，另一台设备读到别的话时可以被覆盖。
+  String? reportedChapter;
 
   bool get started => chapterUuid != null;
 
@@ -116,6 +121,7 @@ class ShelfEntry {
         'latestCount': latestCount,
         'seenCount': seenCount,
         'followed': followed,
+        'reportedChapter': reportedChapter,
       };
 
   factory ShelfEntry.fromJson(Map<String, dynamic> j) => ShelfEntry(
@@ -139,6 +145,7 @@ class ShelfEntry {
         seenCount: j['seenCount'] as int? ?? 0,
         // 旧数据没有这个字段，都视为已追更，书架内容不变。
         followed: j['followed'] as bool? ?? true,
+        reportedChapter: j['reportedChapter'] as String?,
       );
 }
 
@@ -149,6 +156,7 @@ class LibraryStore extends ChangeNotifier {
 
   static const _kShelf = 'shelf.v1';
   static const _kRead = 'read.v1';
+  static const _kSyncBaseline = 'sync.baseline.v1';
 
   final _entries = <String, ShelfEntry>{};
   final _read = <String, Set<String>>{};
@@ -162,6 +170,14 @@ class LibraryStore extends ChangeNotifier {
         final entry = ShelfEntry.fromJson(Map<String, dynamic>.from(e as Map));
         _entries[entry.id] = entry;
       }
+    }
+    // 升级到多设备同步之前的阅读位置，当作已和源站对齐：之后另一台设备读到的新进度可以覆盖它们。
+    if (!(_prefs.getBool(_kSyncBaseline) ?? false)) {
+      for (final e in _entries.values) {
+        if (e.started) e.reportedChapter ??= e.chapterUuid;
+      }
+      if (_entries.isNotEmpty) _prefs.setString(_kShelf, jsonEncode(_entries.values.map((e) => e.toJson()).toList()));
+      _prefs.setBool(_kSyncBaseline, true);
     }
     final read = _prefs.getString(_kRead);
     if (read != null) {
@@ -306,25 +322,55 @@ class LibraryStore extends ChangeNotifier {
     return added;
   }
 
-  /// 合并源站浏览历史：只给本地还没读过的作品补上「读到哪一话」，本地记录更精确（有页码），不覆盖。
-  /// 没在书架上的作品只记阅读位置、不追更。返回补上阅读位置的数量。
-  int mergeRemoteHistory(Iterable<({ComicBrief comic, String chapterId, String chapterName})> items) {
+  /// 合并源站浏览历史。源站只记到「哪一话」，没有时间，所以按「这一话有没有上报过」判断谁新：
+  /// - 本机没读过：用源站的位置；
+  /// - 同一话：保留本机页码；
+  /// - 不同话：本机这一话已上报过（或是升级前的旧位置），说明另一台设备读得更晚，换成源站那一话，
+  ///   从这话开头读；本机有还没上报成功的新位置（比如当时断网），保留本机。
+  /// 只在源站历史里的作品：记位置，不追更。
+  ({int filled, int updated}) mergeRemoteHistory(Iterable<({ComicBrief comic, String chapterId, String chapterName})> items) {
     var filled = 0;
+    var updated = 0;
+    var changed = false;
     for (final h in items) {
       final c = h.comic;
       if (c.pathWord.isEmpty) continue;
       final e = _entries[c.pathWord] ??= ShelfEntry(id: c.pathWord, kind: ShelfKind.manga, name: c.name, cover: c.cover, author: c.authorText, followed: false, updatedAt: 1);
-      if (e.started) continue;
-      e
-        ..chapterUuid = h.chapterId
-        ..chapterName = h.chapterName
-        ..page = 0
-        ..pageCount = 0
-        ..progress = 0;
-      filled++;
+      if (!e.started) {
+        _placeAt(e, h.chapterId, h.chapterName);
+        filled++;
+      } else if (e.chapterUuid == h.chapterId) {
+        if (e.reportedChapter != h.chapterId) {
+          e.reportedChapter = h.chapterId;
+          changed = true;
+        }
+      } else if (e.reportedChapter == e.chapterUuid) {
+        _placeAt(e, h.chapterId, h.chapterName);
+        e.updatedAt = DateTime.now().millisecondsSinceEpoch;
+        updated++;
+      }
     }
-    if (filled > 0) _save();
-    return filled;
+    if (filled + updated > 0 || changed) _save();
+    return (filled: filled, updated: updated);
+  }
+
+  void _placeAt(ShelfEntry e, String chapterUuid, String chapterName) {
+    e
+      ..chapterUuid = chapterUuid
+      ..chapterName = chapterName
+      ..chapterIndex = null
+      ..page = 0
+      ..pageCount = 0
+      ..progress = 0
+      ..reportedChapter = chapterUuid;
+  }
+
+  /// 这一话已上报到源站（见 [AccountService.reportRead]）。只在它仍是当前阅读位置时记下。
+  void markReported(String id, String chapterUuid) {
+    final e = _entries[id];
+    if (e == null || e.chapterUuid != chapterUuid || e.reportedChapter == chapterUuid) return;
+    e.reportedChapter = chapterUuid;
+    _save();
   }
 
   bool isRead(String id, String chapterUuid) => _read[id]?.contains(chapterUuid) ?? false;

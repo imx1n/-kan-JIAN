@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/account.dart';
 import '../core/chapter_browser.dart';
 import '../core/config.dart';
 import '../core/models.dart';
@@ -172,6 +173,8 @@ class _IosReaderPageState extends State<IosReaderPage> {
       progress: (page + 1) / pages.length,
     );
     if (page >= pages.length - 1) store.markRead(widget.comic.pathWord, c.chapter.uuid);
+    // 读到这一话就上报源站浏览历史（同一话只报一次），另一台设备同步时接上。
+    unawaited(AccountService.instance.reportRead(widget.comic.pathWord, c.chapter.uuid));
   }
 
   /// 预取当前页前后各 `mangaPrefetch` 页。反向阅读时「前面」是往回的页，

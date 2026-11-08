@@ -64,6 +64,14 @@ class _IosAppState extends State<IosApp> with WidgetsBindingObserver {
   @override
   void didChangePlatformBrightness() => _apply();
 
+  /// 回到前台时同步一次（5 分钟内同步过就跳过）：在另一台设备上读过的进度能及时接上。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && AccountService.autoSync && AccountService.instance.loggedIn) {
+      AccountService.instance.autoSyncIfDue().ignore();
+    }
+  }
+
   void _apply() {
     final dark = _wantDark;
     if (dark == IosColors.isDark || !mounted) return;
@@ -136,7 +144,7 @@ class _IosShellState extends State<IosShell> {
     super.initState();
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
     if (IosShell.autoUpdateCheck) Future.delayed(const Duration(seconds: 3), _autoCheck);
-    // 已登录账号时，打开应用稍后同步一次源站书架和历史（30 分钟内同步过就跳过）。
+    // 已登录账号时，打开应用稍后同步一次源站书架和历史（5 分钟内同步过就跳过）。
     if (AccountService.autoSync && AccountService.instance.loggedIn) Future.delayed(const Duration(seconds: 2), AccountService.instance.autoSyncIfDue);
   }
 

@@ -7,12 +7,15 @@ import 'store.dart';
 
 /// 一次同步的结果。
 class SyncReport {
-  const SyncReport({required this.shelfTotal, required this.shelfAdded, required this.historyTotal, required this.historyFilled, required this.at});
+  const SyncReport({required this.shelfTotal, required this.shelfAdded, required this.historyTotal, required this.historyFilled, this.historyUpdated = 0, required this.at});
 
   final int shelfTotal;
   final int shelfAdded;
   final int historyTotal;
   final int historyFilled;
+
+  /// 另一台设备读到了别的话，本机位置跟着换过去的条数。
+  final int historyUpdated;
   final DateTime at;
 }
 
@@ -31,8 +34,8 @@ class AccountService extends ChangeNotifier {
   static const _kUser = 'account.user';
   static const _kLastSync = 'account.lastSync';
 
-  /// 打开应用时距上次同步超过这么久才自动同步。
-  static const autoInterval = Duration(minutes: 30);
+  /// 打开或回到应用时，距上次同步超过这么久才自动同步。两台设备轮流读时要及时接上，所以不宜太长。
+  static const autoInterval = Duration(minutes: 5);
 
   /// 一次同步最多拉取的书架 / 历史条数，避免超大书架一次请求太多页。
   static const maxItems = 500;
@@ -64,6 +67,9 @@ class AccountService extends ChangeNotifier {
     lastSync = t == null ? null : DateTime.fromMillisecondsSinceEpoch(t);
     error = null;
     lastReport = null;
+    _reportedKey = null;
+    _failedKey = null;
+    _failedAt = null;
   }
 
   /// 登录成功后立即同步一次。失败时抛出 [ApiException]（消息可以直接给用户看）。
@@ -100,6 +106,47 @@ class AccountService extends ChangeNotifier {
     notifyListeners();
   }
 
+  String? _reportedKey;
+  String? _failedKey;
+  DateTime? _failedAt;
+
+  /// 阅读器保存位置时调用：这一话还没上报过，就带凭证请求一次章节，让源站记进浏览历史，
+  /// 另一台设备同步时就能接上。同一话只报一次；失败后 1 分钟内不重试。没登录时什么都不做。
+  /// 只在真正读到这一话时调用（预载前后话不算），否则源站会以为已经读到下一话。
+  Future<void> reportRead(String pathWord, String uuid) async {
+    final token = _token;
+    if (token == null) return;
+    final key = '$pathWord/$uuid';
+    if (key == _reportedKey) return;
+    if (key == _failedKey && _failedAt != null && DateTime.now().difference(_failedAt!) < const Duration(minutes: 1)) return;
+    _reportedKey = key;
+    try {
+      await MangaApi.instance.reportRead(pathWord, uuid, token);
+      LibraryStore.instance.markReported(pathWord, uuid);
+      _failedKey = null;
+    } on ApiException {
+      if (_reportedKey == key) _reportedKey = null;
+      _failedKey = key;
+      _failedAt = DateTime.now();
+    }
+  }
+
+  /// 打开作品详情时调用：读浏览历史第一页，找到这部作品就按同步规则合并它的阅读位置，
+  /// 「继续阅读」直接接上另一台设备读到的那一话。返回是否改了本机位置；失败不打扰用户。
+  Future<bool> refreshComic(String pathWord) async {
+    final token = _token;
+    if (token == null) return false;
+    try {
+      final page = await MangaApi.instance.browsedComics(token, limit: 50);
+      final h = page.list.where((r) => r.comic.pathWord == pathWord && r.chapterId != null).firstOrNull;
+      if (h == null) return false;
+      final merged = LibraryStore.instance.mergeRemoteHistory([(comic: h.comic, chapterId: h.chapterId!, chapterName: h.chapterName ?? '')]);
+      return merged.filled + merged.updated > 0;
+    } on ApiException {
+      return false;
+    }
+  }
+
   /// 打开应用时调用：已登录且距上次同步足够久才同步，失败不打扰用户。
   Future<void> autoSyncIfDue() async {
     if (!autoSync || !loggedIn || busy) return;
@@ -120,13 +167,13 @@ class AccountService extends ChangeNotifier {
       final history = await _all((offset) => api.browsedComics(token, offset: offset));
       final store = LibraryStore.instance;
       final added = store.mergeRemoteShelf(shelf.map((r) => r.comic));
-      final filled = store.mergeRemoteHistory([
+      final merged = store.mergeRemoteHistory([
         for (final h in history)
           if (h.chapterId != null) (comic: h.comic, chapterId: h.chapterId!, chapterName: h.chapterName ?? ''),
       ]);
       lastSync = DateTime.now();
       await _prefs.setInt(_kLastSync, lastSync!.millisecondsSinceEpoch);
-      lastReport = SyncReport(shelfTotal: shelf.length, shelfAdded: added, historyTotal: history.length, historyFilled: filled, at: lastSync!);
+      lastReport = SyncReport(shelfTotal: shelf.length, shelfAdded: added, historyTotal: history.length, historyFilled: merged.filled, historyUpdated: merged.updated, at: lastSync!);
       return true;
     } on AuthExpired catch (e) {
       error = e.message;

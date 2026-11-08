@@ -20,6 +20,9 @@ import 'ios_settings.dart';
 import 'ios_source.dart';
 import 'ios_theme.dart';
 
+/// 云端构建号（GitHub Actions 运行编号），用来分辨覆盖安装的是哪一次构建；本地构建为空。
+const _ciRun = String.fromEnvironment('CI_RUN');
+
 /// 修改网络代理。默认「跟随系统」：系统 VPN 类代理会自动生效；需要 HTTP 代理时再填 host:port。
 Future<void> iosEditProxy(BuildContext context) async {
   final prefs = ReaderPrefs.instance;
@@ -197,7 +200,7 @@ class _IosMinePageState extends State<IosMinePage> {
           IosRow(
             icon: 'download',
             title: '检查更新',
-            subtitle: '当前 v$_version · GitHub Releases',
+            subtitle: '当前 v$_version${_ciRun.isEmpty ? '' : ' · 构建 #$_ciRun'} · GitHub Releases',
             valueWidget: _checking
                 ? const CupertinoActivityIndicator()
                 : Text(
