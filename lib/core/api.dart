@@ -67,9 +67,18 @@ class MangaApi {
     headers: AppConfig.apiHeaders,
   ));
 
+  /// 网页端登录专用：只带 [AppConfig.webLoginHeaders]，不继承 [AppConfig.apiHeaders]。
+  final _webDio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 12),
+    receiveTimeout: const Duration(seconds: 20),
+  ));
+
   /// 测试或离线截图时替换网络层，返回本地样例数据。
   @visibleForTesting
-  set adapter(HttpClientAdapter a) => _dio.httpClientAdapter = a;
+  set adapter(HttpClientAdapter a) {
+    _dio.httpClientAdapter = a;
+    _webDio.httpClientAdapter = a;
+  }
 
   /// 最近一次成功的主机，供界面显示。
   String get activeHost => RouteSelector.instance.activeHost;
@@ -201,39 +210,51 @@ class MangaApi {
   Future<ChapterContent> chapter(String pathWord, String uuid) async =>
       ChapterContent.fromJson(await _get('/api/v3/comic/$pathWord/chapter/$uuid'));
 
-  /// 网页端账号登录：密码按网页端协议编码为 base64(密码-6位随机数)，同时提交这个随机数。
+  /// 网页端账号登录，与官网桌面站（`/web/login/loginByAccount`）用同一个接口
+  /// `/api/kb/web/login`：密码编码为 base64(密码-6位随机数)，同时提交这个随机数。
   /// 成功返回 `{token, user_id, username, nickname, …}`。每次登录都会让旧凭证失效；
   /// 短时间多次登录会被源站风控（code 210），失败信息原样返回给用户。
+  /// 登录域名连不上时换 [AppConfig.webLoginHosts] 里的下一个。
   Future<Map<String, dynamic>> login(String username, String password) async {
-    final salt = (100000 + Random.secure().nextInt(900000)).toString();
-    try {
-      final res = await _dio.post<Object>(
-        '${AppConfig.webHost}/api/v1/login',
-        data: {
-          'username': username,
-          'password': base64.encode(utf8.encode('$password-$salt')),
-          'salt': salt,
-          'platform': 1,
-          'version': '3.1.0',
-          'source': '',
-        },
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          headers: {'referer': '${AppConfig.webHost}/web/login', 'origin': AppConfig.webHost},
-          validateStatus: (s) => s != null && s < 500,
-        ),
-      );
-      final body = res.data is String ? jsonDecode(res.data as String) : res.data;
-      if (body is Map && body['code'] == 200 && body['results'] is Map && (body['results'] as Map)['token'] is String) {
-        return Map<String, dynamic>.from(body['results'] as Map);
+    Object? lastFailure;
+    for (final host in AppConfig.webLoginHosts) {
+      final salt = (100000 + Random.secure().nextInt(900000)).toString();
+      try {
+        final res = await _webDio.post<Object>(
+          '$host/api/kb/web/login',
+          data: {
+            'username': username,
+            'password': base64.encode(utf8.encode('$password-$salt')),
+            'salt': salt,
+            'platform': '2',
+            'version': AppConfig.webLoginVersion,
+            'source': 'freeSite',
+          },
+          options: Options(
+            contentType: Headers.formUrlEncodedContentType,
+            headers: AppConfig.webLoginHeaders(host),
+            followRedirects: false,
+            validateStatus: (s) => s != null && s < 500,
+          ),
+        );
+        final body = res.data is String ? jsonDecode(res.data as String) : res.data;
+        if (body is Map && body['code'] == 200 && body['results'] is Map && (body['results'] as Map)['token'] is String) {
+          final results = Map<String, dynamic>.from(body['results'] as Map);
+          // 网页接口有时不回用户名，用登录时填的补上。
+          if ('${results['username'] ?? ''}'.trim().isEmpty) results['username'] = username;
+          return results;
+        }
+        final detail = body is Map && body['results'] is Map ? (body['results'] as Map)['detail'] : null;
+        final message = body is Map ? '${body['message'] ?? body['detail'] ?? detail ?? ''}'.trim() : '';
+        throw ApiException(message.isEmpty ? '登录失败（HTTP ${res.statusCode}）' : message);
+      } on DioException catch (e) {
+        // 网络层失败：换下一个登录域名。
+        lastFailure = ApiException(_describe(e));
+      } on FormatException {
+        throw const ApiException('登录接口返回了无法识别的内容');
       }
-      final message = body is Map ? '${body['message'] ?? body['detail'] ?? ''}'.trim() : '';
-      throw ApiException(message.isEmpty ? '登录失败（HTTP ${res.statusCode}）' : message);
-    } on DioException catch (e) {
-      throw ApiException(_describe(e));
-    } on FormatException {
-      throw const ApiException('登录接口返回了无法识别的内容');
     }
+    throw lastFailure is ApiException ? lastFailure : const ApiException('登录失败');
   }
 
   Future<Map<String, dynamic>> memberInfo(String token) => _get('/api/v3/member/info', const {}, token);

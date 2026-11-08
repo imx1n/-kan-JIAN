@@ -50,8 +50,32 @@ class AppConfig {
     ),
   ];
 
-  /// 网页端主机：账号登录走这里（App 端登录需要额外的加密值，没有打通）。
-  static const webHost = 'https://www.copy4000.com';
+  /// 网页端登录域名，按顺序尝试：前一个连不上才换下一个。账号登录走这里
+  /// （App 端登录需要额外的加密值，没有打通）。
+  static const webLoginHosts = ['https://copy4000.com', 'https://copy3000.com'];
+
+  /// 网页端登录提交的前端版本号，与官网桌面站一致（2026-11 实测可用）。
+  static const webLoginVersion = '2025.12.10';
+
+  /// 网页端登录请求头：模拟桌面 Edge 在官网登录页发出的请求。
+  /// 不能混入上面 [apiHeaders] 那套安卓 WebView 请求头，混进去会被源站判成
+  /// 旧版/破解 App，返回「請到官網更新最新APP」。
+  static Map<String, String> webLoginHeaders(String host) => {
+        'sec-ch-ua-platform': '"Windows"',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0',
+        'Accept': 'application/json, text/plain, */*',
+        'sec-ch-ua': '"Microsoft Edge";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'platform': '2',
+        'origin': host,
+        'sec-fetch-site': 'same-origin',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-dest': 'empty',
+        'referer': '$host/web/login/loginByAccount?url=person%2Fhome',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'cookie': 'webp=1',
+      };
 
   static const imageHeaders = <String, String>{'User-Agent': 'COPY/3.1.0'};
 

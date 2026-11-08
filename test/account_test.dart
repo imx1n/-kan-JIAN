@@ -54,7 +54,7 @@ void main() {
 
   test('登录：网页端协议，密码编码为 base64(密码-随机数)，只保存凭证', () async {
     final fake = _FakeAdapter((o, body) {
-      if (o.path.endsWith('/api/v1/login')) {
+      if (o.path.endsWith('/api/kb/web/login')) {
         return (200, {'code': 200, 'message': '请求成功', 'results': {'token': 't0k', 'username': 'reader', 'nickname': '读者'}});
       }
       return (200, _page(const []));
@@ -63,11 +63,15 @@ void main() {
     await AccountService.instance.login('reader', 'secret');
 
     final (o, body) = fake.requests.first;
-    expect(o.uri.toString(), startsWith('https://www.copy4000.com/api/v1/login'));
+    expect(o.uri.toString(), startsWith('https://copy4000.com/api/kb/web/login'));
+    // 网页端登录不能带安卓 App 那套请求头。
+    expect(o.headers['X-Requested-With'], isNull);
+    expect(o.headers['platform'], '2');
     final form = Uri.splitQueryString(body);
     expect(form['salt'], matches(RegExp(r'^\d{6}$')));
     expect(utf8.decode(base64.decode(form['password']!)), 'secret-${form['salt']}');
-    expect(form['platform'], '1');
+    expect(form['platform'], '2');
+    expect(form['source'], 'freeSite');
 
     final account = AccountService.instance;
     expect(account.loggedIn, isTrue);
@@ -84,6 +88,18 @@ void main() {
     expect(AccountService.instance.loggedIn, isFalse);
   });
 
+  test('登录：主域名连不上时换备用域名', () async {
+    final fake = _FakeAdapter((o, body) {
+      if (o.uri.host == 'copy4000.com') throw Exception('connection refused');
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 't2', 'username': 'u'}});
+      return (200, _page(const []));
+    });
+    MangaApi.instance.adapter = fake;
+    await AccountService.instance.login('u', 'p');
+    expect(AccountService.instance.loggedIn, isTrue);
+    expect(fake.requests.any((r) => r.$1.uri.host == 'copy3000.com'), isTrue);
+  });
+
   test('同步：书架加入追更，历史只补本机没有的阅读位置', () async {
     final store = LibraryStore.instance;
     // 本机已经读过 b（有页码），不应被源站历史覆盖。
@@ -97,7 +113,7 @@ void main() {
       progress: .3,
     );
     MangaApi.instance.adapter = _FakeAdapter((o, body) {
-      if (o.path.endsWith('/api/v1/login')) return (200, {'code': 200, 'results': {'token': 't', 'username': 'u'}});
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 't', 'username': 'u'}});
       if (o.path.contains('/member/collect/comics')) {
         return (200, _page([{'comic': _comic('a', 'A')}, {'comic': _comic('b', 'B')}]));
       }
@@ -128,7 +144,7 @@ void main() {
 
   test('凭证失效（401）：清掉凭证，书架不动', () async {
     MangaApi.instance.adapter = _FakeAdapter((o, body) {
-      if (o.path.endsWith('/api/v1/login')) return (200, {'code': 200, 'results': {'token': 'old', 'username': 'u'}});
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 'old', 'username': 'u'}});
       if (o.path.contains('/member/collect/comics') && LibraryStore.instance.entries.isEmpty) return (200, _page([{'comic': _comic('a', 'A')}]));
       return (401, {'detail': 'Invalid token.'});
     });
