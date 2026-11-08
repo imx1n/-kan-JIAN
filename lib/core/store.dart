@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -362,9 +363,19 @@ class ReaderPrefs extends ChangeNotifier {
     'brightness': 1.0,
     'font': 0,
     'fontSize': 19.0,
-    'mangaScroll': false,
-    'mangaRtl': true,
+    // 漫画阅读模式，沿用 PMX 的划分：
+    // 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，4 条漫。
+    'mangaMode': 0,
+    // 手势分区：0 关闭（只有中间切换控件），1 自适应，2 左右三分，3 L 形。
+    'mangaArea': 1,
+    // 首次进入阅读器时的分区提示遮罩是否已看过。
+    'mangaTipSeen': false,
+    // 预取页数：当前页前/后各预加载几页。
+    'mangaPrefetch': 3,
     'mangaSaver': false,
+    // 图片适配：0 自动，1 适应宽度，2 适应高度，3 适应屏幕，4 原始尺寸。
+    // 对应 PageFit.fromValue。
+    'mangaFit': 0,
     'mangaBrightness': 1.0,
     'proxy': AppConfig.defaultProxy,
     'shelfSort': 0,
@@ -406,10 +417,35 @@ class ReaderPrefs extends ChangeNotifier {
 
   T _get<T>(String k) => _v[k] as T;
 
+  /// 落盘去抖。拖动滑块时每帧都会 `_set`，如果每次都 `jsonEncode` 整张表
+  /// 再走平台通道写盘，主线程会被写盘啃掉——这就是「亮度滑一下很卡」。
+  /// 现在内存里立刻生效、立刻通知，写盘合并到 320ms 后一次。
+  Timer? _saveTimer;
+
+  /// 是否合并写盘。真机上是 true（拖动滑块时别每帧写盘）；
+  /// 测试里设成 false，否则用例结束时会有个挂着的定时器。
+  static bool debounce = true;
+
   void _set(String k, Object v) {
+    // 值没变就不通知。拖滑块时同一档会重复回调，没必要让整棵树重建。
+    if (_v[k] == v) return;
     _v[k] = v;
-    _prefs.setString(_k, jsonEncode(_v));
     notifyListeners();
+    if (!debounce) {
+      _flush();
+      return;
+    }
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 320), _flush);
+  }
+
+  /// 立刻写盘（退出阅读器、切后台这类时机用）。
+  void flush() => _flush();
+
+  void _flush() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    _prefs.setString(_k, jsonEncode(_v));
   }
 
   int get theme => _get('theme');
@@ -420,14 +456,50 @@ class ReaderPrefs extends ChangeNotifier {
   set font(int v) => _set('font', v);
   double get fontSize => _get('fontSize');
   set fontSize(double v) => _set('fontSize', v);
-  bool get mangaScroll => _get('mangaScroll');
-  set mangaScroll(bool v) => _set('mangaScroll', v);
-  bool get mangaRtl => _get('mangaRtl');
-  set mangaRtl(bool v) => _set('mangaRtl', v);
+  /// 漫画阅读模式：
+  /// 0 单页·从左向右，1 单页·从右向左，2 单页·从上向下，3 单页·从下向上，
+  /// 4 条漫·无缝，5 条漫·留白。
+  ///
+  /// 划分参考 PasteMangaX（`ComicCategories.READER_MODE_*`）：它把「单页」按横/纵、
+  /// 正/反拆成四种，交互差异全部由手势分区和目标位置算出来，代码里只有一套翻页逻辑。
+  int get mangaMode => _get('mangaMode');
+  set mangaMode(int v) => _set('mangaMode', v.clamp(0, 5));
+
+  /// 是否条漫（连续纵向滚动）。4 无缝、5 留白都是条漫。
+  bool get mangaScroll => mangaMode >= 4;
+  // 已经是条漫时保持原来的 4/5，不要在切换别的开关时把它打回 4。
+  set mangaScroll(bool v) => mangaMode = v ? (mangaScroll ? mangaMode : 4) : 0;
+
+  /// 是否从右向左翻（日漫顺序）。仅对横向模式有意义。
+  bool get mangaRtl => mangaMode == 1 || mangaMode == 3;
+  set mangaRtl(bool v) => mangaMode = v ? (mangaScroll ? mangaMode : 1) : (mangaScroll ? mangaMode : 0);
+
+  /// 竖向翻页（上下翻，不是左右）。条漫也是竖向阅读。
+  bool get mangaVertical => mangaMode == 2 || mangaMode == 3 || mangaMode >= 4;
+
+  /// 翻页方向反过来：从下向上 / 从右向左。
+  bool get mangaReversed => mangaMode == 1 || mangaMode == 3;
+
+  /// 手势分区：0 关闭，1 自适应，2 左右三分，3 L 形，4 边缘，5 Kindle 式。
+  int get mangaArea => _get('mangaArea');
+  set mangaArea(int v) => _set('mangaArea', v.clamp(0, 5));
+
+  /// 首次进入阅读器时是否已经展示过手势分区提示。
+  bool get mangaTipSeen => _get('mangaTipSeen');
+  set mangaTipSeen(bool v) => _set('mangaTipSeen', v);
+
+  /// 预取页数：当前页前后各预加载几页。
+  int get mangaPrefetch => _get('mangaPrefetch');
+  set mangaPrefetch(int v) => _set('mangaPrefetch', v.clamp(1, 8));
 
   /// 省流画质：图片用 800px 高（接口默认 1500px）。
   bool get mangaSaver => _get('mangaSaver');
   set mangaSaver(bool v) => _set('mangaSaver', v);
+
+  /// 图片适配方式，取值见 `PageFit.fromValue`。
+  int get mangaFit => _get('mangaFit');
+  set mangaFit(int v) => _set('mangaFit', v.clamp(0, 4));
+
 
   /// 漫画页面明暗，0.3–1；只模拟，不改系统亮度。
   double get mangaBrightness => _get('mangaBrightness');

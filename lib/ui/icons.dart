@@ -56,6 +56,13 @@ const _paths = <String, String>{
   'trash': '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   'info': '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
   'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  // 阅读方式：圆角纸页 + 粗箭头（卡通式，实心浅填充）
+  'modeLtr': '<rect x="2.8" y="4.4" width="9" height="15.2" rx="3.2" fill="#000" fill-opacity=".2" stroke-width="1.7"/><path d="M14.6 12h6.4m-2.9-2.9L21 12l-2.9 2.9" stroke-width="2.1"/>',
+  'modeRtl': '<rect x="12.2" y="4.4" width="9" height="15.2" rx="3.2" fill="#000" fill-opacity=".2" stroke-width="1.7"/><path d="M9.4 12H3m2.9-2.9L3 12l2.9 2.9" stroke-width="2.1"/>',
+  'modeTtb': '<rect x="4.4" y="2.8" width="15.2" height="9" rx="3.2" fill="#000" fill-opacity=".2" stroke-width="1.7"/><path d="M12 14.6v6.4m-2.9-2.9L12 21l2.9-2.9" stroke-width="2.1"/>',
+  'modeBtt': '<rect x="4.4" y="12.2" width="15.2" height="9" rx="3.2" fill="#000" fill-opacity=".2" stroke-width="1.7"/><path d="M12 9.4V3m-2.9 2.9L12 3l2.9 2.9" stroke-width="2.1"/>',
+  'modeWebtoon': '<rect x="3.6" y="2.8" width="16.8" height="5.6" rx="2.8" fill="#000" fill-opacity=".2" stroke-width="1.5"/><rect x="3.6" y="9.2" width="16.8" height="5.6" rx="2.8" fill="#000" fill-opacity=".2" stroke-width="1.5"/><rect x="3.6" y="15.6" width="16.8" height="5.6" rx="2.8" fill="#000" fill-opacity=".2" stroke-width="1.5"/>',
+  'modeStrip': '<rect x="3.6" y="2.6" width="16.8" height="5" rx="2.5" fill="#000" fill-opacity=".2" stroke-width="1.5"/><rect x="3.6" y="9.5" width="16.8" height="5" rx="2.5" fill="#000" fill-opacity=".2" stroke-width="1.5"/><rect x="3.6" y="16.4" width="16.8" height="5" rx="2.5" fill="#000" fill-opacity=".2" stroke-width="1.5"/>',
 };
 
 final _cache = <String, String>{};
@@ -75,7 +82,7 @@ class AppIcon extends StatelessWidget {
       () => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" '
           'stroke-width="$stroke" stroke-linecap="round" stroke-linejoin="round">${_paths[name] ?? ''}</svg>',
     );
-    final c = color ?? IconTheme.of(context).color ?? const Color(0xFF263C40);
+    final c = color ?? IconTheme.of(context).color ?? const Color(0xFF17181C);
     return SvgPicture.string(
       svg,
       width: size,

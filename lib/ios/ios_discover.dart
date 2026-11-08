@@ -8,6 +8,7 @@ import '../core/store.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show Dock, Space;
 import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
@@ -70,12 +71,12 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             SliverToBoxAdapter(child: _SearchField(onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())))),
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.only(top: Space.x2),
                 child: TextChips(items: [('全部题材', null, false), for (final t in AppConfig.themes) (t.$1, null, false)], selected: _theme, onSelect: _selectTheme),
               ),
             ),
             if (pager != null) ..._themeSlivers(pager) else ..._overviewSlivers(),
-            const SliverToBoxAdapter(child: SizedBox(height: 130)),
+            SliverToBoxAdapter(child: SizedBox(height: Dock.clearance(context))),
           ],
         ),
       ),
@@ -95,7 +96,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
       const SliverToBoxAdapter(child: IosSection('人气排行', note: '按人气增长')),
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+          padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.x2),
           child: IosSegmented(
             options: [for (final p in _periods) p.$2],
             selected: _period,
@@ -122,7 +123,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
     return [
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+          padding: const EdgeInsets.fromLTRB(Space.page, Space.x5, Space.page, Space.x3),
           child: Row(children: [
             Text(name, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
             const SizedBox(width: 8),
@@ -146,13 +147,13 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
         SliverToBoxAdapter(child: IosNetworkError(message: pager.error!, onRetry: pager.refresh))
       else
         SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
+          padding: const EdgeInsets.symmetric(horizontal: Space.page),
           sliver: SliverGrid.builder(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 3,
-              crossAxisSpacing: 14,
-              mainAxisSpacing: 18,
-              mainAxisExtent: (MediaQuery.sizeOf(context).width - 40 - 28) / 3 * 4 / 3 + 8 + 40,
+              crossAxisSpacing: Space.x3 + 2,
+              mainAxisSpacing: Space.x4 + 2,
+              mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + Space.x2 + 40,
             ),
             itemCount: pager.items.isEmpty && pager.loading ? 6 : pager.items.length,
             itemBuilder: (context, i) => pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: pager.items[i]),
@@ -171,7 +172,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
           final list = snap.data?.list;
           return ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: Space.page),
             itemCount: list?.length ?? 4,
             separatorBuilder: (_, _) => const SizedBox(width: 14),
             itemBuilder: (context, i) => SizedBox(
@@ -207,7 +208,7 @@ class _SearchField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+        padding: const EdgeInsets.symmetric(horizontal: Space.page),
         child: Pressable(
           onTap: onTap,
           semanticLabel: '搜索作品、作者',
@@ -248,7 +249,7 @@ class _RankRow extends StatelessWidget {
     return Pressable(
       onTap: () => iosOpenDetail(context, r.comic),
       child: Padding(
-        padding: const EdgeInsets.only(left: 20),
+        padding: const EdgeInsets.only(left: Space.page),
         child: Row(children: [
           SizedBox(
             width: 24,
@@ -259,7 +260,7 @@ class _RankRow extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Container(
-              padding: const EdgeInsets.fromLTRB(0, 12, 20, 12),
+              padding: const EdgeInsets.fromLTRB(0, Space.x3, Space.page, Space.x3),
               decoration: BoxDecoration(border: last ? null : Border(bottom: BorderSide(color: IosColors.line, width: .5))),
               child: Row(children: [
                 Expanded(
@@ -319,7 +320,7 @@ class _RowPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.fromLTRB(20, 10, 20, 10),
+        padding: EdgeInsets.fromLTRB(Space.page, 10, Space.page, 10),
         child: Row(children: [
           Redacted(width: 22, height: 20),
           SizedBox(width: 12),
@@ -446,13 +447,13 @@ class _IosLatestPageState extends State<IosLatestPage> {
                   SliverToBoxAdapter(child: IosNetworkError(message: _pager.error!, onRetry: _pager.refresh))
                 else
                   SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    padding: const EdgeInsets.symmetric(horizontal: Space.page),
                     sliver: SliverGrid.builder(
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 3,
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 18,
-                        mainAxisExtent: (MediaQuery.sizeOf(context).width - 40 - 28) / 3 * 4 / 3 + 8 + 40,
+                        crossAxisSpacing: Space.x3 + 2,
+                        mainAxisSpacing: Space.x4 + 2,
+                        mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + Space.x2 + 40,
                       ),
                       itemCount: _pager.items.isEmpty && _pager.loading ? 9 : _pager.items.length,
                       itemBuilder: (context, i) => _pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: _pager.items[i]),

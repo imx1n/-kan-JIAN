@@ -34,6 +34,12 @@ void main() {
     IosColors.isDark = false;
   });
 
+  // 偏好写入默认去抖 320ms。测试里关掉：否则用例结束时会挂着定时器，
+  // flutter_test 会报「A Timer is still pending even after the widget tree was disposed」。
+  // （tearDown 太晚，那个断言在用例体结束时就跑了。）
+  setUp(() => ReaderPrefs.debounce = false);
+  tearDown(() => ReaderPrefs.debounce = true);
+
   Future<void> pump(WidgetTester tester, Widget child) async {
     tester.view.physicalSize = const Size(1179, 2556);
     tester.view.devicePixelRatio = 3;
@@ -80,7 +86,7 @@ void main() {
     await pump(tester, const IosShelfPage());
 
     expect(find.text('最近在读'), findsOneWidget);
-    expect(find.text('第245话  第 3 / 16 页'), findsOneWidget);
+    expect(find.text('第245话 · 3 / 16 页'), findsOneWidget);
     expect(find.text('新 2 话'), findsOneWidget);
     expect(find.text('我的藏书'), findsOneWidget);
 
@@ -159,13 +165,16 @@ void main() {
     await tester.scrollUntilVisible(find.text('阅读设置'), -200);
     await tester.tap(find.text('阅读设置'));
     await tester.pumpAndSettle();
-    expect(find.text('翻页方向'), findsOneWidget);
+    // 阅读方式把「单页横/纵 × 正反 + 条漫」合成一个选项，不再单列「翻页方向」。
+    expect(find.text('阅读方式'), findsOneWidget);
+    expect(find.text('手势分区'), findsOneWidget);
     expect(find.text('纸白 · 19 磅'), findsOneWidget);
     await tester.tap(find.text('阅读方式'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('条漫').last);
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.mangaScroll, isTrue);
+    expect(ReaderPrefs.instance.mangaMode, 4);
   });
 
   uiTest('账号同步：未登录显示登录表单，填好账号密码才能登录', (tester) async {
@@ -197,7 +206,7 @@ void main() {
     await tester.tap(find.text('外观设置'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(CupertinoSwitch));
+    await tester.tap(find.byType(AppSwitch));
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.reduceTransparency, isTrue);
     expect(GlassScope.reduce.value, isTrue);
@@ -238,7 +247,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.theme, 1);
 
-    expect(find.byType(CupertinoSwitch), findsNothing);
+    expect(find.byType(AppSwitch), findsNothing);
 
     await tester.tap(find.text('字体与排版'));
     await tester.pumpAndSettle();

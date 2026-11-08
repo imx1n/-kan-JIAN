@@ -463,7 +463,7 @@ class IosChapterRow extends StatelessWidget {
         padding: EdgeInsets.symmetric(horizontal: isCurrent ? 10 : 16),
         height: 52,
         child: Row(children: [
-          SizedBox(width: 40, child: Text('${chapter.index + 1}', style: TextStyle(fontSize: 13, color: isCurrent ? (dark ? IosColors.dAccent : IosColors.accent) : muted))),
+          SizedBox(width: 40, child: Text('${chapter.index + 1}', style: TextStyle(fontSize: 13, color: isCurrent ? IosColors.ink : muted))),
           Expanded(
             child: Text(chapter.name,
                 maxLines: 1,

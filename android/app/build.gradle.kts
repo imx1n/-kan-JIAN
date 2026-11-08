@@ -46,6 +46,19 @@ android {
         release {
             signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
         }
+        // 调试包也用正式钥匙：模拟器 / 真机上装着的通常是 release 包，
+        // 签名不一致会导致覆盖安装失败，要装 debug 就得先卸载并丢本地书架。
+        debug {
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+        }
+        // profile 同理。它是测性能用的包（AOT + 观测工具），必须能直接覆盖
+        // 装在手头那个包上，否则每次都得卸载、丢书架。
+        //
+        // 注意：`profile` 这个 buildType 由 Flutter Gradle 插件先建好，
+        // 这里只能改它的签名，不能 `create` 一个同名的（会报 already exists）。
+        getByName("profile") {
+            signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+        }
     }
 }
 

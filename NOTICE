@@ -1,0 +1,22 @@
+栞间（kanjian）第三方代码声明
+================================
+
+本项目遵循 Apache License, Version 2.0（见同目录 LICENSE 文件）。
+
+1. Mihon
+--------
+- 项目：Mihon（https://github.com/mihonapp/mihon）
+- 许可证：Apache License, Version 2.0
+- 使用范围：仅漫画阅读器部分。lib/reader/ 下的 Dart 代码（阅读方式划分、
+  点击分区引擎、三话连续条目模型、ReaderView 视图形态）在行为与结构上移植自
+  Mihon 的 app/src/main/java/eu/kanade/tachiyomi/ui/reader/，为适配 Flutter
+  双端改写为 Dart，未逐行复制 Kotlin 源码。
+- 改动说明：Kotlin → Dart 语言改写；去掉 Android 专有依赖
+  （ViewPager2 / RecyclerView / Coil / SubsamplingScaleImageView），改用 Flutter
+  的 PageView / ListView / CachedNetworkImage / InteractiveViewer；
+  接入了本项目自己的章节数据层与界面语言（IosColors、Glass 等）。
+- 未使用 Mihon 的名称、图标或品牌标识。
+
+2. 其他依赖
+-----------
+各 Dart / Flutter 包的许可证见 pubspec.lock 中对应包自身的仓库。

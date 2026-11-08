@@ -1,22 +1,26 @@
-import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
-import '../core/api.dart';
 import '../core/chapter_browser.dart';
 import '../core/config.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../reader/reader_controller.dart';
+import '../reader/reader_models.dart';
+import '../reader/reader_navigation.dart';
+import '../reader/reader_transition.dart';
+import '../reader/reader_view.dart';
+import '../reader/reading_mode.dart';
+import '../reader/reader_chrome.dart';
+import '../reader/page_fit.dart';
+import '../reader/reader_theme.dart';
 import '../ui/icons.dart';
 import '../ui/widgets.dart' show revealChapterRow;
-import '../ui/zoomable_page.dart';
 import '../ui/motion.dart';
-import 'ios_app.dart';
-import 'ios_detail.dart' show IosChapterRow;
 import 'ios_theme.dart';
 
 class IosReaderPage extends StatefulWidget {
@@ -33,81 +37,129 @@ class IosReaderPage extends StatefulWidget {
 
 class _IosReaderPageState extends State<IosReaderPage> {
   final _prefs = ReaderPrefs.instance;
-  final _scroll = ScrollController();
-  PageController? _pager;
-  ChapterContent? _content;
-  String? _error;
-  bool _loading = true;
   bool _chrome = true;
-  bool _advancing = false;
-  int _page = 0;
+
+  /// 页面亮度单独走通知器。
+  ///
+  /// 亮度是拖动中每帧都在变的值，如果它和别的设置一样走 `setState`，
+  /// 拖一下滑块整个阅读区（含所有图片页）就重建几十次——这就是
+  /// 「亮度滑一下很卡」。现在只有压暗那一层 `ColoredBox` 跟着重建。
+  final _brightness = ValueNotifier<double>(1);
+
+  /// 阅读区缓存的控件实例。
+  ///
+  /// `_readerBody()` 每次调用都会新建一个 `ReaderView`。只改亮度或预加载页数时
+  /// 这个实例完全没变，返回同一个实例可以让 Flutter 直接跳过整棵子树的重建
+  /// （`Element.updateChild` 对同一个 widget 实例是短路返回的）。
+  Widget? _body;
+
+  /// 上一次看到的相关偏好，用来判断这次通知要不要重建。
+  int _lastMode = 0;
+  bool _lastSaver = false;
+  int _lastArea = 0;
+  int _lastFit = 0;
+
+  /// 图片重新载入用的计数，换 key 强制重建。
   int _retry = 0;
-  List<GlobalKey> _keys = const [];
+
+  /// 阅读引擎：管当前话与前后话的载入。
+  late final ReaderController _ctl = ReaderController(pathWord: widget.comic.pathWord, group: widget.group)
+    ..addListener(_onEngine);
+
+  /// 首次进入时的手势提示：看到第一张图后弹一次，3 秒自动淡出。
+  bool _tip = false;
+  Timer? _tipTimer;
 
   bool get _saver => _prefs.mangaSaver;
-  List<String> get _images => [for (final u in _content?.images ?? const <String>[]) imageUrlFor(u, saver: _saver)];
-  bool get _scrollMode => _prefs.mangaScroll;
-  bool get _rtl => _prefs.mangaRtl;
+
+  ReadingMode get _mode => ReadingMode.fromPreference(_prefs.mangaMode);
+
+  /// 「图片适配」设置。实际用哪一档还要过一遍 [PageFit.resolve]（auto 会跟着阅读方式走）。
+  PageFit get _fit => PageFit.fromValue(_prefs.mangaFit);
+
+  /// 当前话的页（已应用省流画质）。
+  List<String> get _images => [for (final p in _ctl.current?.pages ?? const <ReaderPage>[]) imageUrlFor(p.url, saver: _saver)];
+
+  /// 底部面板和进度用的当前页下标。
+  int get _page => _ctl.pageIndex;
 
   @override
   void initState() {
     super.initState();
     _prefs.addListener(_onPrefs);
-    SystemChrome.setSystemUIOverlayStyle(kDarkChrome);
-    _load(widget.chapterUuid, page: widget.initialPage);
+    _lastMode = _prefs.mangaMode;
+    _lastSaver = _prefs.mangaSaver;
+    _lastArea = _prefs.mangaArea;
+    _lastFit = _prefs.mangaFit;
+    _brightness.value = _prefs.mangaBrightness;
+    SystemChrome.setSystemUIOverlayStyle(pageChrome);
+    _ctl.open(widget.chapterUuid, page: widget.initialPage);
+    // 第一次进阅读器：图片出来后再弹分区提示，3 秒自动收起，点一下也能关。
+    if (!_prefs.mangaTipSeen && _prefs.mangaArea != 0) {
+      _tipTimer = Timer(const Duration(milliseconds: 700), () {
+        if (!mounted) return;
+        setState(() => _tip = true);
+        _tipTimer = Timer(const Duration(seconds: 3), _closeTip);
+      });
+    }
+  }
+
+  void _closeTip() {
+    _tipTimer?.cancel();
+    _tipTimer = null;
+    if (!mounted) return;
+    setState(() => _tip = false);
+    _prefs.mangaTipSeen = true;
   }
 
   @override
   void dispose() {
+    _tipTimer?.cancel();
     _prefs.removeListener(_onPrefs);
+    // 退出阅读器时把去抖中的偏好立刻写掉，避免 320ms 内退出丢设置。
+    _prefs.flush();
+    _brightness.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setSystemUIOverlayStyle(pageChrome);
-    _pager?.dispose();
-    _scroll.dispose();
+    _ctl.removeListener(_onEngine);
+    _ctl.dispose();
     super.dispose();
   }
 
+  /// 偏好变化时判断要不要重建整页。
+  ///
+  /// 只有「影响阅读区结构」的三项（阅读方式、画质、点击区域）需要重建；
+  /// 亮度和预加载页数改完立刻返回，阅读区一个像素都不动。
   void _onPrefs() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    _brightness.value = _prefs.mangaBrightness;
+    final structural = _prefs.mangaMode != _lastMode ||
+        _prefs.mangaSaver != _lastSaver ||
+        _prefs.mangaArea != _lastArea ||
+        _prefs.mangaFit != _lastFit;
+    _lastMode = _prefs.mangaMode;
+    _lastSaver = _prefs.mangaSaver;
+    _lastArea = _prefs.mangaArea;
+    _lastFit = _prefs.mangaFit;
+    if (!structural) return;
+    _body = null;
+    setState(() {});
   }
 
-  Future<void> _load(String uuid, {int page = 0}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final c = await MangaApi.instance.chapter(widget.comic.pathWord, uuid);
-      if (!mounted) return;
-      final start = c.images.isEmpty ? 0 : page.clamp(0, c.images.length - 1);
-      _pager?.dispose();
-      setState(() {
-        _content = c;
-        _loading = false;
-        _advancing = false;
-        _page = start;
-        _pager = PageController(initialPage: start);
-        _keys = List.generate(c.images.length, (_) => GlobalKey());
-      });
-      if (_scroll.hasClients) _scroll.jumpTo(0);
-      if (_scrollMode && start > 0) WidgetsBinding.instance.addPostFrameCallback((_) => _jumpScroll(start));
-      _save();
-      _precache(start);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _advancing = false;
-          _error = e.toString();
-        });
-      }
-    }
+  void _onEngine() {
+    if (!mounted) return;
+    _body = null;
+    setState(() {});
+    _save();
+    _precache(_page);
   }
 
   void _save() {
-    final c = _content;
-    if (c == null || c.images.isEmpty || c.isLock) return;
+    final c = _ctl.current;
+    final pages = c?.pages;
+    if (c == null || pages == null || pages.isEmpty || c.locked) return;
     final store = LibraryStore.instance;
+    final page = _ctl.pageIndex.clamp(0, pages.length - 1);
     store.recordPosition(
       id: widget.comic.pathWord,
       create: () => ShelfEntry(id: widget.comic.pathWord, kind: ShelfKind.manga, name: widget.comic.name, cover: widget.comic.cover, author: widget.comic.authorText, followed: false),
@@ -115,492 +167,274 @@ class _IosReaderPageState extends State<IosReaderPage> {
       chapterName: c.chapter.name,
       chapterIndex: c.chapter.index,
       group: c.chapter.groupPathWord.isEmpty ? widget.group : c.chapter.groupPathWord,
-      page: _page,
-      pageCount: c.images.length,
-      progress: (_page + 1) / c.images.length,
+      page: page,
+      pageCount: pages.length,
+      progress: (page + 1) / pages.length,
     );
-    if (_page >= c.images.length - 1) store.markRead(widget.comic.pathWord, c.chapter.uuid);
+    if (page >= pages.length - 1) store.markRead(widget.comic.pathWord, c.chapter.uuid);
   }
 
+  /// 预取当前页前后各 `mangaPrefetch` 页。反向阅读时「前面」是往回的页，
+  /// 所以两个方向都补，代价只是多几张图。
   void _precache(int from) {
     final images = _images;
-    for (var i = from + 1; i <= from + 3 && i < images.length; i++) {
+    final n = _prefs.mangaPrefetch;
+    for (var i = from - n; i <= from + n; i++) {
+      if (i < 0 || i >= images.length || i == from) continue;
       precacheImage(CachedNetworkImageProvider(images[i], headers: AppConfig.imageHeaders), context).ignore();
     }
   }
 
-  void _onPage(int i) {
-    final page = math.min(i, math.max(0, _images.length - 1));
-    if (page == _page) return;
-    setState(() => _page = page);
-    _save();
-    _precache(page);
-  }
+  /// 显示 / 隐藏阅读控件。
+  ///
+  /// **不再切 `SystemUiMode.immersiveSticky`**。进沉浸模式之后，安卓会把
+  /// 下一次点按当作「唤出系统栏」吃掉，要再点一次才落到阅读区——这就是
+  /// 「点好几下设置才出来」的原因。现在系统栏始终 edge-to-edge，隐藏的
+  /// 只有我们自己的顶栏和底栏，点按永远第一时间到达。
+  void _setChrome(bool show) => setState(() => _chrome = show);
 
-  void _setChrome(bool show) {
-    setState(() => _chrome = show);
-    SystemChrome.setEnabledSystemUIMode(show ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
-  }
-
-  void _onTapUp(TapUpDetails d) {
-    final x = d.globalPosition.dx / MediaQuery.sizeOf(context).width;
-    if (_scrollMode || (x > .3 && x < .7)) return _setChrome(!_chrome);
-    final forward = _rtl ? x <= .3 : x >= .7;
-    _goTo(_page + (forward ? 1 : -1), animate: true);
-  }
-
-  void _goTo(int page, {bool animate = false}) {
-    final max = _images.length;
-    page = page.clamp(0, _scrollMode ? max - 1 : max);
-    if (_scrollMode) {
-      _jumpScroll(page);
-    } else if (_pager?.hasClients ?? false) {
-      animate ? _pager!.animateToPage(page, duration: const Duration(milliseconds: 240), curve: Curves.easeOutCubic) : _pager!.jumpToPage(page);
-    }
-  }
-
-  void _jumpScroll(int page) {
-    final ctx = _keys.elementAtOrNull(page)?.currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(ctx);
-      return;
-    }
-    if (!_scroll.hasClients) return;
-    final est = MediaQuery.sizeOf(context).width * 1.45;
-    _scroll.jumpTo(math.min(page * est, _scroll.position.maxScrollExtent));
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final c = _keys.elementAtOrNull(page)?.currentContext;
-      if (c != null) Scrollable.ensureVisible(c);
-    });
-  }
-
-  /// 条漫：中线所在页为当前页；手指拖着越过底部才接下一话（惯性回弹不算）。
-  bool _onScroll(ScrollNotification n) {
-    final pulledPastEnd = n.metrics.pixels > n.metrics.maxScrollExtent + 72;
-    final byFinger = (n is ScrollUpdateNotification && n.dragDetails != null) || (n is OverscrollNotification && n.dragDetails != null);
-    if (byFinger && ((n is OverscrollNotification && n.overscroll > 0) || pulledPastEnd)) {
-      final next = _content?.chapter.next;
-      if (!_advancing && !_loading && next != null) {
-        _advancing = true;
-        HapticFeedback.lightImpact();
-        _load(next);
-      }
-      return false;
-    }
-    if (n is! ScrollUpdateNotification || _keys.isEmpty) return false;
-    final mid = MediaQuery.sizeOf(context).height / 2;
-    var found = _page;
-    final lo = math.max(0, _page - 6), hi = math.min(_keys.length - 1, _page + 6);
-    for (var i = lo; i <= hi; i++) {
-      final box = _keys[i].currentContext?.findRenderObject() as RenderBox?;
-      if (box == null || !box.attached) continue;
-      if (box.localToGlobal(Offset.zero).dy <= mid) found = i;
-    }
-    _onPage(found);
-    return false;
-  }
-
+  /// 换话：交给引擎，它会重建三话窗口。
   void _openChapter(String? uuid) {
-    if (uuid != null) _load(uuid);
+    if (uuid != null) _ctl.open(uuid);
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = _content;
+    final c = _ctl.current;
+    final pages = c?.pages;
+    final n = pages?.length ?? 0;
+    final pad = MediaQuery.paddingOf(context);
     return Scaffold(
-      backgroundColor: IosColors.dBg,
+      backgroundColor: ReaderPalette.reader,
       body: Stack(
         children: [
-          Positioned.fill(child: _body(c)),
           Positioned.fill(
-            child: IgnorePointer(
-              child: ColoredBox(color: Colors.black.withValues(alpha: (1 - _prefs.mangaBrightness) * .75)),
+            child: AnimatedSwitcher(
+              duration: Motion.of(context, 200),
+              switchInCurve: Motion.ease,
+              switchOutCurve: Motion.ease,
+              // 两套视图叠着淡入淡出，不位移：翻页轴不同，横移会打架。
+              layoutBuilder: (current, previous) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 旧的在下、新的在上，淡入盖住淡出，中途不会露出背板色。
+                  for (final child in previous) child,
+                  ?current,
+                ],
+              ),
+              child: KeyedSubtree(key: ValueKey(_mode), child: _readerBody()),
             ),
           ),
-          _topBar(c),
-          _bottomPanel(c),
-          if (!_chrome && c != null && _images.isNotEmpty) _miniChip(c),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ValueListenableBuilder<double>(
+                valueListenable: _brightness,
+                builder: (context, b, _) => ColoredBox(color: Colors.black.withValues(alpha: (1 - b) * .75)),
+              ),
+            ),
+          ),
+          // 顶部栏：整条栏 + 大标题（拷贝漫画式布局）
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ChromeReveal(
+              visible: _chrome,
+              dy: -8,
+              child: ReaderTopBar(
+                mangaTitle: widget.comic.name,
+                chapterTitle: c?.name ?? '',
+                onBack: () => Navigator.pop(context),
+                topInset: pad.top,
+              ),
+            ),
+          ),
+          // 底部控制栏：上一话 · 页码滑块 · 下一话 + 设置 / 目录
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: ChromeReveal(
+              visible: _chrome,
+              dy: 8,
+              child: ReaderControlBar(
+                onSettings: _showSettings,
+                onCatalog: c == null ? () {} : () => _showCatalog(c),
+                onPrevChapter: c?.chapter.prev == null ? null : () => _openChapter(c!.chapter.prev),
+                onNextChapter: c?.chapter.next == null ? null : () => _openChapter(c!.chapter.next),
+                currentPage: n == 0 ? 0 : _page + 1,
+                totalPages: n,
+                onPageChange: (i) => _ctl.jumpTo(i),
+                bottomInset: pad.bottom,
+              ),
+            ),
+          ),
+          // 控件隐藏时：底部居中显示页码
+          if (!_chrome && n > 0)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: pad.bottom + 18,
+              child: IgnorePointer(
+                child: Center(
+                  child: Text(
+                    '${_page + 1} / $n',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1, color: ReaderPalette.muted, fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                ),
+              ),
+            ),
+          if (_tip)
+            Positioned.fill(
+              child: _GestureTip(area: _prefs.mangaArea, vertical: _mode.isVertical, reversed: _mode.reversed, onTap: _closeTip),
+            ),
         ],
       ),
     );
   }
 
-  Widget _body(ChapterContent? c) {
-    if (_loading) return const Center(child: CupertinoActivityIndicator(color: IosColors.dMuted, radius: 12));
-    if (_error != null) {
+  /// 阅读区：新引擎的 ReaderView，三话连续、支持跨话接续。
+  ///
+  /// 返回值会缓存：只有阅读方式 / 画质 / 点击区域 / 引擎状态变化时才重建，
+  /// 拖亮度或改预加载页数不会碰它。
+  Widget _readerBody() {
+    if (_body != null) return _body!;
+    final body = _buildBody();
+    _body = body;
+    return body;
+  }
+
+  Widget _buildBody() {
+    final c = _ctl.current;
+    if (c == null || _ctl.loading) {
+      return Center(child: CupertinoActivityIndicator(color: ReaderPalette.muted, radius: 12));
+    }
+    if (_ctl.error != null) {
       return Center(
         child: Unavailable(
           dark: true,
           icon: 'wifiOff',
           title: '这一话没有载入',
-          message: _error!,
+          message: _ctl.error!,
           actions: [
-            AccentButton(
-              label: '重试',
-              icon: 'refresh',
-              onTap: () => _load(c?.chapter.uuid ?? widget.chapterUuid, page: _page),
-            ),
+            AccentButton(label: '重试', icon: 'refresh', onTap: () => _ctl.retry()),
           ],
         ),
       );
     }
-    if (c == null) return const SizedBox();
-    if (c.isLock || c.images.isEmpty) return _locked(c);
-    final images = _images;
-    if (_scrollMode) {
-      return GestureDetector(
-        onTap: () => _setChrome(!_chrome),
-        child: NotificationListener<ScrollNotification>(
-          onNotification: _onScroll,
-          child: ListView.builder(
-            controller: _scroll,
-            physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
-            scrollCacheExtent: const ScrollCacheExtent.pixels(2400),
-            itemCount: images.length + 1,
-            itemBuilder: (context, i) => i == images.length ? _endCard(c, scroll: true) : KeyedSubtree(key: _keys[i], child: _image(images[i], fitWidth: true)),
-          ),
-        ),
-      );
-    }
-    return PageView.builder(
-      controller: _pager,
-      reverse: _rtl,
-      itemCount: images.length + 1,
-      onPageChanged: _onPage,
-      itemBuilder: (context, i) => i == images.length ? GestureDetector(onTap: () => _setChrome(!_chrome), child: _endCard(c)) : ZoomablePage(onTapUp: _onTapUp, child: _image(images[i])),
+    if (c.locked || (c.pages?.isEmpty ?? true)) return _locked(c);
+    return ReaderView(
+      controller: _ctl,
+      mode: _mode,
+      navigation: ReaderNavigation(area: _prefs.mangaArea, mode: _mode),
+      onMenu: () => _setChrome(!_chrome),
+      pageBuilder: (context, page) => _imagePage(page),
+      transitionBuilder: (context, t) => ReaderTransition(
+        transition: t,
+        // 纵向阅读（含上下翻页）现在也走连续列表，过渡页必须有确定高度，
+        // 所以这里传 stacked 而不是 continuous。
+        continuous: _mode.stacked,
+        onRetry: (ch) => _ctl.retryChapter(ch),
+        onCatalog: () => _showCatalog(c),
+        onBackToChapter: () => _ctl.jumpTo(0),
+        onOpenChapter: (uuid) => _ctl.open(uuid),
+      ),
     );
   }
 
-  Widget _image(String url, {bool fitWidth = false}) {
-    final w = MediaQuery.sizeOf(context).width;
-    return CachedNetworkImage(
-      key: ValueKey('$url#$_retry'),
+  /// 一页的图片。
+  ///
+  /// 适配方式由「图片适配」设置决定（见 [PageFit]）。纵向阅读（条漫和上下翻页）
+  /// 一律按宽度铺满并让高度跟着原比例走，这样页面自然首尾相接、上下不再出现
+  /// 背板色的白边；横向翻页默认整页适应。
+  ///
+  /// [PageFit.original] 不能用 `BoxFit.none` 直接塞进铺满的容器：`none` 会把
+  /// 图片按原始像素居中，小于屏幕时四周留空、大于屏幕时被裁掉。所以这里包一层
+  /// `Align`，让它从顶部对齐、超出的部分由外层裁掉，滚动阅读才不会一段悬空。
+  Widget _imagePage(ReaderPage page) {
+    final url = imageUrlFor(page.url, saver: _saver);
+    final size = MediaQuery.sizeOf(context);
+    final applies = _fit.resolve(mode: _mode);
+    final width = size.width;
+
+    // 铺满宽度的模式必须显式给宽度：图片还没到时先占住位置，加载完成不会顶一下。
+    final fillsWidth = applies == PageFit.width;
+    final placeholderHeight = fillsWidth ? width * 1.4 : null;
+
+    Widget image = CachedNetworkImage(
+      key: ValueKey('$url#$_retry#${applies.name}'),
       imageUrl: url,
       httpHeaders: AppConfig.imageHeaders,
-      fit: fitWidth ? BoxFit.fitWidth : BoxFit.contain,
-      width: fitWidth ? w : null,
+      fit: applies.boxFit,
+      width: applies == PageFit.original ? null : (fillsWidth ? width : null),
       fadeInDuration: const Duration(milliseconds: 120),
       progressIndicatorBuilder: (context, _, p) => SizedBox(
-        height: fitWidth ? w * 1.4 : null,
-        child: const Center(child: CupertinoActivityIndicator(color: IosColors.dMuted)),
+        height: placeholderHeight,
+        child: Center(child: CupertinoActivityIndicator(color: ReaderPalette.muted)),
       ),
       errorWidget: (context, _, _) => SizedBox(
-        height: fitWidth ? w * 1.4 : null,
+        height: placeholderHeight,
         child: Center(
           child: TextAction(
             label: '图片没有载入，点按重试',
-            color: IosColors.dInk,
+            color: ReaderPalette.text,
             onTap: () {
               CachedNetworkImage.evictFromCache(url);
-              setState(() => _retry++);
+              setState(() {
+                _retry++;
+                _body = null;
+              });
             },
           ),
         ),
       ),
     );
+
+    if (applies == PageFit.original) {
+      // 原始尺寸：从顶部居中，宽了由外层（ListView）裁掉两边，不做任何缩放。
+      image = ClipRect(child: Align(alignment: Alignment.topCenter, child: image));
+    } else if (applies == PageFit.height) {
+      image = SizedBox(height: size.height, child: Align(alignment: Alignment.topCenter, child: image));
+    }
+
+    return image;
   }
 
-  Widget _topBar(ChapterContent? c) {
-    final top = MediaQuery.paddingOf(context).top;
-    return Positioned(
-      top: top + 4,
-      left: 16,
-      right: 16,
-      child: ChromeReveal(
-        visible: _chrome,
-        dy: -8,
-        child: Row(
-          children: [
-            GlassButton(icon: 'chevronLeft', label: '返回', dark: true, onTap: () => Navigator.pop(context)),
-            Expanded(
-              child: Column(
-                children: [
-                  Text(
-                    widget.comic.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, color: IosColors.dMuted),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    c?.chapter.name ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.dInk),
-                  ),
-                ],
-              ),
-            ),
-            GlassButton(icon: 'info', label: '作品详情', dark: true, onTap: () => iosOpenDetail(context, widget.comic)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _bottomPanel(ChapterContent? c) {
-    final n = _images.length;
-    final hasPages = c != null && n > 0 && !c.isLock;
-    final bottom = MediaQuery.paddingOf(context).bottom;
-    return Positioned(
-      left: 16,
-      right: 16,
-      bottom: (bottom > 0 ? bottom - 4 : 16),
-      child: ChromeReveal(
-        visible: _chrome,
-        dy: 8,
-        child: Glass(
-          dark: true,
-          radius: 28,
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        const TextSpan(text: '第 '),
-                        TextSpan(
-                          text: hasPages ? '${_page + 1}' : '—',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        TextSpan(text: hasPages ? ' / $n 页' : ''),
-                      ],
-                    ),
-                    style: const TextStyle(fontSize: 15, color: IosColors.dInk),
-                  ),
-                  const Spacer(),
-                  Text(_scrollMode ? '条漫阅读' : (_rtl ? '单页 · 从右向左' : '单页 · 从左向右'), style: const TextStyle(fontSize: 13, color: IosColors.dMuted)),
-                ],
-              ),
-              Row(
-                children: [
-                  _chapterArrow('chevronLeft', '上一话', c?.chapter.prev),
-                  Expanded(
-                    child: Directionality(
-                      textDirection: _rtl && !_scrollMode ? TextDirection.rtl : TextDirection.ltr,
-                      child: CupertinoSlider(
-                        value: hasPages ? _page.toDouble() : 0,
-                        max: hasPages ? math.max(1, n - 1).toDouble() : 1,
-                        divisions: hasPages && n > 1 ? n - 1 : null,
-                        activeColor: IosColors.dInk,
-                        onChanged: hasPages && n > 1 ? (v) => setState(() => _page = v.round()) : null,
-                        onChangeEnd: hasPages ? (v) => _goTo(v.round()) : null,
-                      ),
-                    ),
-                  ),
-                  _chapterArrow('chevronRight', '下一话', c?.chapter.next),
-                ],
-              ),
-              const Divider(height: 1, thickness: .5, color: Color(0x33FFFFFF)),
-              SizedBox(
-                height: 60,
-                child: Row(
-                  children: [_tool('list', '目录', c == null ? null : () => _showCatalog(c)), _tool('settings', '阅读设置', _showSettings), _tool('info', '详情', () => iosOpenDetail(context, widget.comic))],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _chapterArrow(String icon, String label, String? uuid) => Pressable(
-    onTap: uuid == null ? null : () => _openChapter(uuid),
-    semanticLabel: label,
-    child: SizedBox.square(
-      dimension: 40,
-      child: Center(child: AppIcon(icon, size: 18, color: IosColors.dInk, stroke: 2)),
-    ),
-  );
-
-  Widget _tool(String icon, String label, VoidCallback? onTap) => Expanded(
-    child: Pressable(
-      onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AppIcon(icon, size: 21, color: IosColors.dInk, stroke: 1.6),
-          const SizedBox(height: 4),
-          Text(label, style: const TextStyle(fontSize: 12, color: IosColors.dInk)),
-        ],
-      ),
-    ),
-  );
-
-  Widget _miniChip(ChapterContent c) => Positioned(
-    left: 0,
-    right: 0,
-    bottom: MediaQuery.paddingOf(context).bottom + 12,
-    child: IgnorePointer(
-      child: Center(
-        child: Glass(
-          dark: true,
-          radius: 15,
-          shadow: false,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Text('${c.chapter.name} · ${_page + 1} / ${_images.length}', style: const TextStyle(fontSize: 12, color: IosColors.dMuted)),
-        ),
-      ),
-    ),
-  );
-
-  /// 话末：阅读完成 + 下一条卡片 + 返回本话 / 目录。
-  Widget _endCard(ChapterContent c, {bool scroll = false}) {
-    final next = c.chapter.next;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(24, scroll ? 48 : 0, 24, scroll ? 140 : 0),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: IosColors.dMuted, width: 1.2),
-              ),
-              child: const Center(child: AppIcon('check', size: 18, color: IosColors.dInk, stroke: 2)),
-            ),
-            const SizedBox(height: 14),
-            const Text('阅读完成', style: TextStyle(fontSize: 13, color: IosColors.dMuted)),
-            const SizedBox(height: 6),
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(
-                    text: c.chapter.name,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  const TextSpan(
-                    text: ' 完',
-                    style: TextStyle(color: IosColors.dMuted),
-                  ),
-                ],
-              ),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 28, color: IosColors.dInk),
-            ),
-            const SizedBox(height: 6),
-            Text('本话 ${_images.length} 页', style: const TextStyle(fontSize: 13, color: IosColors.dMuted)),
-            const SizedBox(height: 28),
-            if (next != null)
-              Pressable(
-                onTap: () => _openChapter(next),
-                child: Glass(
-                  dark: true,
-                  radius: 22,
-                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('下一条', style: TextStyle(fontSize: 13, color: IosColors.dMuted)),
-                            SizedBox(height: 4),
-                            Text(
-                              '点按或继续滑动',
-                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: IosColors.dInk),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Text('接着读', style: TextStyle(fontSize: 15, color: IosColors.dInk)),
-                      const SizedBox(width: 4),
-                      const AppIcon('chevronRight', size: 14, color: IosColors.dInk, stroke: 2),
-                    ],
-                  ),
-                ),
-              )
-            else
-              const Text('已经是最新一话', style: TextStyle(fontSize: 15, color: IosColors.dMuted)),
-            if (scroll && next != null) ...[const SizedBox(height: 16), const Text('继续下滑，自动接上下一条', style: TextStyle(fontSize: 13, color: IosColors.dMuted))],
-            const SizedBox(height: 24),
-            Glass(
-              dark: true,
-              radius: 26,
-              child: SizedBox(
-                height: 52,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Pressable(
-                      onTap: () => _goTo(0),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 22),
-                        child: Row(
-                          children: [
-                            AppIcon('chevronLeft', size: 15, color: IosColors.dInk, stroke: 2),
-                            SizedBox(width: 6),
-                            Text('返回本话', style: TextStyle(fontSize: 15, color: IosColors.dInk)),
-                          ],
-                        ),
-                      ),
-                    ),
-                    Container(width: .5, height: 22, color: const Color(0x40FFFFFF)),
-                    Pressable(
-                      onTap: () => _showCatalog(c),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 22),
-                        child: Row(
-                          children: [
-                            AppIcon('list', size: 17, color: IosColors.dInk),
-                            SizedBox(width: 6),
-                            Text('目录', style: TextStyle(fontSize: 15, color: IosColors.dInk)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _locked(ChapterContent c) => Center(
+  Widget _locked(ReaderChapter c) => Center(
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 36),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Glass(
+          Glass(
             dark: true,
             radius: 20,
             child: SizedBox.square(
               dimension: 72,
-              child: Center(child: AppIcon('lock', size: 26, color: IosColors.dInk)),
+              child: Center(child: AppIcon('lock', size: 26, color: ReaderPalette.text)),
             ),
           ),
           const SizedBox(height: 26),
           Text(
-            '${widget.comic.name} · ${c.chapter.name}',
+            '${widget.comic.name} · ${c.name}',
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 13, color: IosColors.dMuted),
+            style: TextStyle(fontSize: 13, color: ReaderPalette.muted),
           ),
           const SizedBox(height: 8),
           Text(
-            c.isLock ? '这一话需要会员' : '这一话暂时没有图片',
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: IosColors.dInk),
+            c.locked ? '这一话需要会员' : '这一话暂时没有图片',
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: ReaderPalette.text),
           ),
           const SizedBox(height: 10),
           Text(
-            c.isLock ? '源站已将这一话标记为付费内容。\n栞间不会请求本话的图片。' : '源站没有返回这一话的图片，可以换一话试试。',
+            c.locked ? '源站已将这一话标记为付费内容。\n栞间不会请求本话的图片。' : '源站没有返回这一话的图片，可以换一话试试。',
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 15, height: 1.55, color: IosColors.dMuted),
+            style: TextStyle(fontSize: 15, height: 1.55, color: ReaderPalette.muted),
           ),
           const SizedBox(height: 26),
           Pressable(
             onTap: () => _showCatalog(c),
-            child: const Glass(
+            child: Glass(
               dark: true,
               radius: 25,
               child: SizedBox(
@@ -611,10 +445,10 @@ class _IosReaderPageState extends State<IosReaderPage> {
                   children: [
                     Text(
                       '回到目录',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.dInk),
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: ReaderPalette.text),
                     ),
                     SizedBox(width: 8),
-                    AppIcon('list', size: 18, color: IosColors.dInk),
+                    AppIcon('list', size: 18, color: ReaderPalette.text),
                   ],
                 ),
               ),
@@ -623,14 +457,14 @@ class _IosReaderPageState extends State<IosReaderPage> {
           const SizedBox(height: 8),
           Pressable(
             onTap: () => Navigator.pop(context),
-            child: const Padding(
+            child: Padding(
               padding: EdgeInsets.all(12),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  AppIcon('chevronLeft', size: 15, color: IosColors.dInk, stroke: 2),
+                  AppIcon('chevronLeft', size: 15, color: ReaderPalette.text, stroke: 2),
                   SizedBox(width: 6),
-                  Text('返回', style: TextStyle(fontSize: 15, color: IosColors.dInk)),
+                  Text('返回', style: TextStyle(fontSize: 15, color: ReaderPalette.text)),
                 ],
               ),
             ),
@@ -640,10 +474,41 @@ class _IosReaderPageState extends State<IosReaderPage> {
     ),
   );
 
-  void _showSettings() => showAppSheet<void>(context, (_) => const _ReadingSettingsSheet());
+  /// 换阅读方式：立即写入，过渡由 [_readerBody] 外面的交叉淡入负责。
+  ///
+  /// 以前这里是「先压遮罩 140ms → 换 → 再等一帧 → 撤遮罩」。那 140ms 里
+  /// 用户已经点了却什么都没发生，读起来就是「卡了一下」；遮罩本身在浅色
+  /// 主题下还会闪一下灰。现在点下去立刻换，新旧两套视图 200ms 交叉淡入。
+  void _setMode(ReadingMode m) {
+    if (m == _mode) return;
+    // 只写偏好；`_onPrefs` 会识别出阅读方式变了并重建阅读区。
+    _prefs.mangaMode = m.preference;
+  }
 
-  void _showCatalog(ChapterContent c) => showAppSheet<void>(
+  void _showSettings() => showAppSheet<void>(
+        context,
+        // onClose 要收 sheet 自己的 context——外层 context 弹不掉这个路由。
+        (sheet) => ReaderSettingsSheet(
+          mode: _mode,
+          onMode: _setMode,
+          prefetch: _prefs.mangaPrefetch,
+          // 预加载页数不影响任何可见结构，直接存。
+          onPrefetch: (v) => _prefs.mangaPrefetch = v,
+          area: _prefs.mangaArea,
+          onArea: (v) => _prefs.mangaArea = v,
+          onClose: () => Navigator.pop(sheet),
+          saver: _prefs.mangaSaver,
+          onSaver: (v) => _prefs.mangaSaver = v,
+          brightness: _prefs.mangaBrightness,
+          // 亮度走通知器，不触发整页重建。
+          onBrightness: (v) => _prefs.mangaBrightness = v,
+        ),
+        scrim: kSheetScrimReader,
+      );
+
+  void _showCatalog(ReaderChapter c) => showAppSheet<void>(
     context,
+    scrim: kSheetScrimReader,
     (sheet) => _CatalogSheet(
       comic: widget.comic,
       group: c.chapter.groupPathWord.isEmpty ? widget.group : c.chapter.groupPathWord,
@@ -652,88 +517,159 @@ class _IosReaderPageState extends State<IosReaderPage> {
       pageCount: _images.length,
       onPick: (uuid) {
         Navigator.pop(sheet);
-        _load(uuid);
+        _ctl.open(uuid);
       },
     ),
   );
 }
 
-/// 阅读设置：阅读方式、翻页方向、图片画质、页面亮度集中在一个面板。
-class _ReadingSettingsSheet extends StatelessWidget {
-  const _ReadingSettingsSheet();
+/// 首次进入阅读器时的分区提示：用半透明色块画出「哪里翻页、哪里切控件」，
+/// 3 秒后自动淡出，点一下也能关。
+///
+/// 形状沿用了 PasteMangaX 的 `ReaderGestureTipsView`：上下分区画成一竖一横的 L 形，
+/// 左右分区画成三块竖条，颜色用绿=上一页、红=下一页，和那个项目的取色一致。
+class _GestureTip extends StatefulWidget {
+  const _GestureTip({required this.area, required this.vertical, required this.reversed, required this.onTap});
+
+  final int area;
+  final bool vertical;
+  final bool reversed;
+  final VoidCallback onTap;
+
+  @override
+  State<_GestureTip> createState() => _GestureTipState();
+}
+
+class _GestureTipState extends State<_GestureTip> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 260))..forward();
+
+  static const _prev = Color(0x6651CF66);
+  static const _next = Color(0x66FF6B6B);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final p = ReaderPrefs.instance;
-    Widget label(String t) => Padding(
-      padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-      child: Text(t, style: TextStyle(fontSize: 13, color: IosColors.muted)),
-    );
-    return ListenableBuilder(
-      listenable: p,
-      builder: (context, _) => Padding(
-        padding: EdgeInsets.fromLTRB(10, 0, 10, MediaQuery.paddingOf(context).bottom + 8),
-        child: Glass(
-          radius: 32,
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 5,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(color: const Color(0x33000000), borderRadius: BorderRadius.circular(3)),
-                ),
-              ),
-              Row(
-                children: [
-                  Text(
-                    '阅读设置',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: IosColors.ink),
+    final size = MediaQuery.sizeOf(context);
+    final h = size.height;
+    final w = size.width;
+    // 0 关闭：没有分区，全部是「切换控件」。1 自适应：竖向用 L 形，横向用左右。
+    final area = widget.area == 1 ? (widget.vertical ? 3 : 2) : widget.area;
+    // 反向阅读时上一页/下一页的色块对调。
+    final prev = widget.reversed ? _next : _prev;
+    final next = widget.reversed ? _prev : _next;
+    // 「左 / 右」在反向阅读时互换。
+    final left = widget.reversed ? next : prev;
+    final right = widget.reversed ? prev : next;
+
+    return FadeTransition(
+      opacity: _c,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Stack(
+          children: [
+            Positioned.fill(child: ColoredBox(color: const Color(0x59000000))),
+            // ── 分区色块：绿=上一页，红=下一页 ──
+            switch (area) {
+              // 关闭：不画分区，只留中间的说明。
+              0 => const SizedBox.shrink(),
+              // 左右三分：左 1/3 上一页，右 1/3 下一页，中间切换控件。
+              2 => Stack(children: [
+                  Positioned(top: 0, bottom: 0, left: 0, width: w / 3, child: ColoredBox(color: left)),
+                  Positioned(top: 0, bottom: 0, right: 0, width: w / 3, child: ColoredBox(color: right)),
+                ]),
+              // L 形：上 1/3、左中 上一页；下 1/3、右中 下一页。
+              3 => Stack(children: [
+                  Positioned(top: 0, left: 0, right: 0, height: h / 3, child: ColoredBox(color: prev)),
+                  Positioned(bottom: 0, left: 0, right: 0, height: h / 3, child: ColoredBox(color: next)),
+                  Positioned(top: 0, left: 0, width: 44, height: h / 3, child: ColoredBox(color: prev)),
+                ]),
+              // 边缘：两侧 1/3 下一页，中间底部 1/3 上一页。
+              4 => Stack(children: [
+                  Positioned(top: 0, bottom: 0, left: 0, width: w / 3, child: ColoredBox(color: left)),
+                  Positioned(top: 0, bottom: 0, right: 0, width: w / 3, child: ColoredBox(color: right)),
+                  Positioned(bottom: 0, left: w / 3, width: w / 3, height: h / 3, child: ColoredBox(color: prev)),
+                ]),
+              // Kindle：左侧 1/3 上一页，其余 2/3 下一页，顶部 1/3 切换控件（不画色块）。
+              _ => Stack(children: [
+                  Positioned(top: h / 3, bottom: 0, left: 0, width: w / 3, child: ColoredBox(color: left)),
+                  Positioned(top: h / 3, bottom: 0, left: w / 3, right: 0, child: ColoredBox(color: right)),
+                ]),
+            },
+            // ── 中间：切换控件 ──
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('中间点按', style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: .72))),
+                      const SizedBox(height: 4),
+                      const Text('显示 / 隐藏控件', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Colors.white)),
+                    ],
                   ),
-                  const Spacer(),
-                  TextAction(label: '完成', onTap: () => Navigator.pop(context)),
-                ],
-              ),
-              label('阅读方式'),
-              IosSegmented(options: const ['单页', '条漫'], selected: p.mangaScroll ? 1 : 0, onChanged: (i) => p.mangaScroll = i == 1),
-              label('翻页方向'),
-              IosSegmented(options: const ['从右向左', '从左向右'], selected: p.mangaRtl ? 0 : 1, onChanged: (i) => p.mangaRtl = i == 0),
-              label('图片画质'),
-              IosSegmented(options: const ['省流', '标准'], selected: p.mangaSaver ? 0 : 1, onChanged: (i) => p.mangaSaver = i == 0),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-                decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Text('页面亮度', style: TextStyle(fontSize: 15, color: IosColors.ink)),
-                        const Spacer(),
-                        Text('${(p.mangaBrightness * 100).round()}%', style: TextStyle(fontSize: 15, color: IosColors.muted)),
-                      ],
-                    ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: CupertinoSlider(value: p.mangaBrightness, min: .3, max: 1, activeColor: IosColors.accent, onChanged: (v) => p.mangaBrightness = v),
-                    ),
-                  ],
                 ),
               ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(4, 10, 4, 0),
-                child: Text('源站只提供 800px（省流）和 1500px（标准）两种画质。页面亮度只调暗画面，不改变系统亮度。', style: TextStyle(fontSize: 13, height: 1.45, color: IosColors.muted)),
+            ),
+            // ── 分区文字：跟着上面画出的色块位置走 ──
+            ..._regionLabels(area, w, h, prev, next),
+            Positioned(
+              bottom: 44,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                child: Center(
+                  child: Text('点按任意处关闭提示', style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: .55))),
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  /// 各个分区方案下，「上一页 / 下一页」文字该摆在哪。
+  List<Widget> _regionLabels(int area, double w, double h, Color prev, Color next) {
+    Widget at({double? top, double? bottom, double? left, double? right, required String text}) => Positioned(
+          top: top,
+          bottom: bottom,
+          left: left,
+          right: right,
+          child: IgnorePointer(child: Center(child: _label(text))),
+        );
+    return switch (area) {
+      0 => const [],
+      2 => [
+          Positioned(top: 0, bottom: 0, left: 0, width: w / 3, child: Center(child: _label('上一页'))),
+          Positioned(top: 0, bottom: 0, right: 0, width: w / 3, child: Center(child: _label('下一页'))),
+        ],
+      3 => [
+          at(top: 96, left: 0, right: 0, text: '上一页'),
+          at(bottom: 110, left: 0, right: 0, text: '下一页'),
+        ],
+      4 => [
+          Positioned(top: 0, bottom: 0, left: 0, width: w / 3, child: Center(child: _label('下一页'))),
+          Positioned(top: 0, bottom: 0, right: 0, width: w / 3, child: Center(child: _label('下一页'))),
+          at(bottom: 150, left: 0, right: 0, text: '上一页'),
+        ],
+      _ => [
+          Positioned(top: h / 3, bottom: 0, left: 0, width: w / 3, child: Center(child: _label('上一页'))),
+          at(top: h * .55, left: 0, right: 0, text: '下一页'),
+        ],
+    };
+  }
+
+  Widget _label(String t) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(color: const Color(0x59000000), borderRadius: BorderRadius.circular(14)),
+        child: Text(t, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+      );
 }
 
 /// 阅读中的目录：深色面板，分组、条目区间、排序与定位。
@@ -786,154 +722,267 @@ class _CatalogSheetState extends State<_CatalogSheet> {
     super.dispose();
   }
 
+  /// 目录面板与阅读设置面板共用一套视觉令牌：实底 [ReaderPalette.sheet] +
+  /// 27 的顶圆角 + 拖拽把手，不再走 `Glass`。毛玻璃在这里本来就不合适——
+  /// 目录是一张要逐条读的列表，背景透出漫画画面只会让字更难认。
   @override
-  Widget build(BuildContext context) => SizedBox(
-    height: MediaQuery.sizeOf(context).height * .74,
-    child: Glass(
-      dark: true,
-      radius: 32,
-      child: ListenableBuilder(
-        listenable: _browser,
-        builder: (context, _) {
-          final items = _browser.items ?? const <Chapter>[];
-          final ranges = _browser.ranges;
-          final current = ShelfEntry(id: '', kind: ShelfKind.manga, name: '', cover: '', author: '', page: widget.page, pageCount: widget.pageCount);
-          return Column(
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 5,
-                  margin: const EdgeInsets.only(top: 8),
-                  decoration: BoxDecoration(color: const Color(0x4DFFFFFF), borderRadius: BorderRadius.circular(3)),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 10, 16, 6),
-                child: Row(
+  Widget build(BuildContext context) {
+    final pad = MediaQuery.paddingOf(context);
+    final screenH = MediaQuery.sizeOf(context).height;
+    final maxH = (screenH - pad.top - 120).clamp(0.0, screenH * .86);
+    final shape = BorderRadius.vertical(top: Radius.circular(ReaderPalette.sheetRadius));
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: shape,
+        boxShadow: [
+          BoxShadow(color: IosColors.isDark ? const Color(0x33000000) : const Color(0x22000000), blurRadius: 22, offset: const Offset(0, -3)),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: shape,
+        child: ColoredBox(
+          color: ReaderPalette.sheet,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: ListenableBuilder(
+              listenable: _browser,
+              builder: (context, _) {
+                final items = _browser.items ?? const <Chapter>[];
+                final ranges = _browser.ranges;
+                final groups = _browser.groups;
+                final groupIndex = groups.isEmpty ? 0 : groups.indexWhere((g) => g.pathWord == _browser.group).clamp(0, groups.length - 1);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(color: ReaderPalette.grip, borderRadius: BorderRadius.circular(2)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 16, 16, 6),
+                      child: Row(
                         children: [
-                          const Text(
-                            '目录',
-                            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: IosColors.dInk),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('目录', style: TextStyle(fontSize: 16, height: 22 / 16, fontWeight: FontWeight.w600, letterSpacing: .015, color: ReaderPalette.text)),
+                                const SizedBox(height: 2),
+                                Text(widget.comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13, height: 20 / 13, color: ReaderPalette.muted)),
+                              ],
+                            ),
                           ),
-                          Text(
-                            widget.comic.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13, color: IosColors.dMuted),
+                          _SheetIcon(icon: 'locate', label: '定位到在读', onTap: _locate),
+                          const SizedBox(width: 8),
+                          _SheetIcon(icon: 'xmark', label: '关闭', onTap: () => Navigator.pop(context)),
+                        ],
+                      ),
+                    ),
+                    // 分组：多分卷时退化成和设置面板一样的胶囊行，不再用分段控件——
+                    // 分段控件的滑页指示器是 iOS 那套，放在这个面板里显得外来。
+                    if (groups.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(22, 8, 22, 0),
+                        child: SizedBox(
+                          height: ReaderPalette.choiceHeight,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.only(right: 22),
+                            itemCount: groups.length,
+                            separatorBuilder: (_, _) => const SizedBox(width: 6),
+                            itemBuilder: (context, i) => ReaderPill(label: groups[i].name, selected: i == groupIndex, onTap: () => _browser.selectGroup(groups[i].pathWord)),
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(22, 12, 14, 4),
+                      child: Row(
+                        children: [
+                          Text('条目序号', style: TextStyle(fontSize: 13, height: 20 / 13, color: ReaderPalette.muted)),
+                          const Spacer(),
+                          Pressable(
+                            onTap: _browser.toggleOrder,
+                            child: Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AppIcon('sort', size: 15, color: ReaderPalette.text, stroke: 1.9),
+                                  const SizedBox(width: 4),
+                                  Text(_browser.descending ? '降序' : '升序', style: TextStyle(fontSize: 13, height: 20 / 13, color: ReaderPalette.text)),
+                                ],
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
-                    GlassButton(icon: 'locate', label: '定位到在读', dark: true, onTap: _locate),
-                    const SizedBox(width: 10),
-                    GlassButton(icon: 'xmark', label: '关闭', dark: true, onTap: () => Navigator.pop(context)),
-                  ],
-                ),
-              ),
-              if (_browser.groups.length > 1)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
-                  child: IosSegmented(
-                    dark: true,
-                    options: [for (final g in _browser.groups) g.name],
-                    counts: [for (final g in _browser.groups) g.count],
-                    selected: _browser.groups.indexWhere((g) => g.pathWord == _browser.group).clamp(0, _browser.groups.length - 1),
-                    onChanged: (i) => _browser.selectGroup(_browser.groups[i].pathWord),
-                  ),
-                ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 14, 14, 4),
-                child: Row(
-                  children: [
-                    const Text('条目序号', style: TextStyle(fontSize: 13, color: IosColors.dMuted)),
-                    const Spacer(),
-                    Pressable(
-                      onTap: _browser.toggleOrder,
-                      child: Padding(
-                        padding: const EdgeInsets.all(6),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const AppIcon('sort', size: 15, color: IosColors.dInk, stroke: 1.9),
-                            const SizedBox(width: 4),
-                            Text(_browser.descending ? '降序' : '升序', style: const TextStyle(fontSize: 13, color: IosColors.dInk)),
-                          ],
+                    if (ranges.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(22, 2, 22, 0),
+                        child: SizedBox(
+                          height: ReaderPalette.choiceHeight,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.only(right: 22),
+                            itemCount: ranges.length,
+                            separatorBuilder: (_, _) => const SizedBox(width: 6),
+                            itemBuilder: (context, i) {
+                              final idx = _browser.rangeOrder[i];
+                              return ReaderPill(
+                                label: ChapterBrowser.rangeLabel(ranges[idx]),
+                                selected: idx == _browser.rangeIndex.clamp(0, ranges.length - 1),
+                                onTap: () => _browser.selectRange(idx),
+                              );
+                            },
+                          ),
                         ),
                       ),
+                    Flexible(
+                      fit: FlexFit.loose,
+                      child: _browser.error != null
+                          ? Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 40),
+                              child: Center(child: TextAction(label: '目录加载失败，点按重试', color: ReaderPalette.text, onTap: _browser.retry)),
+                            )
+                          : (_browser.loading || _browser.items == null)
+                              ? const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 60),
+                                  child: Center(child: CupertinoActivityIndicator()),
+                                )
+                              : ListView.builder(
+                                  shrinkWrap: true,
+                                  padding: EdgeInsets.fromLTRB(14, 6, 14, 16 + pad.bottom),
+                                  itemCount: items.length,
+                                  itemBuilder: (context, i) {
+                                    final ch = items[i];
+                                    final isCurrent = ch.uuid == widget.current.uuid;
+                                    return KeyedSubtree(
+                                      key: i == 0 ? _firstKey : null,
+                                      child: _CatalogRow(
+                                        key: isCurrent ? _currentKey : null,
+                                        chapter: ch,
+                                        first: i == 0,
+                                        read: LibraryStore.instance.isRead(widget.comic.pathWord, ch.uuid),
+                                        current: isCurrent,
+                                        page: widget.page,
+                                        pageCount: widget.pageCount,
+                                        onTap: () => widget.onPick(ch.uuid),
+                                      ),
+                                    );
+                                  },
+                                ),
                     ),
                   ],
-                ),
-              ),
-              if (ranges.length > 1)
-                SizedBox(
-                  height: 46,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-                    itemCount: ranges.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 8),
-                    itemBuilder: (context, i) {
-                      final idx = _browser.rangeOrder[i];
-                      final on = idx == _browser.rangeIndex.clamp(0, ranges.length - 1);
-                      return Pressable(
-                        haptic: true,
-                        onTap: () => _browser.selectRange(idx),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          decoration: BoxDecoration(
-                            color: on ? IosColors.dInk : Colors.transparent,
-                            borderRadius: BorderRadius.circular(21),
-                            border: on ? null : Border.all(color: IosColors.dLine),
-                          ),
-                          child: Center(
-                            widthFactor: 1,
-                            child: Text(
-                              ChapterBrowser.rangeLabel(ranges[idx]),
-                              style: TextStyle(fontSize: 14, color: on ? IosColors.dBg : IosColors.dInk, fontWeight: on ? FontWeight.w700 : FontWeight.w400),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              Expanded(
-                child: _browser.error != null
-                    ? Center(
-                        child: TextAction(label: '目录加载失败，点按重试', color: IosColors.dInk, onTap: _browser.retry),
-                      )
-                    : (_browser.loading || _browser.items == null)
-                    ? const Center(child: CupertinoActivityIndicator(color: IosColors.dMuted))
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 30),
-                        itemCount: items.length,
-                        itemBuilder: (context, i) {
-                          final ch = items[i];
-                          final isCurrent = ch.uuid == widget.current.uuid;
-                          return KeyedSubtree(
-                            key: i == 0 ? _firstKey : null,
-                            child: IosChapterRow(
-                              key: isCurrent ? _currentKey : null,
-                              dark: true,
-                              first: i == 0,
-                              chapter: ch,
-                              read: LibraryStore.instance.isRead(widget.comic.pathWord, ch.uuid),
-                              current: isCurrent ? current : null,
-                              onTap: () => widget.onPick(ch.uuid),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          );
-        },
+                );
+              },
+            ),
+          ),
+        ),
       ),
+    );
+  }
+}
+
+/// 目录里的面板工具按钮：40 的圆角方钮，和瓦片同一族的表面色。
+class _SheetIcon extends StatelessWidget {
+  const _SheetIcon({required this.icon, required this.label, required this.onTap});
+
+  final String icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Pressable(
+    onTap: onTap,
+    semanticLabel: label,
+    child: Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(color: ReaderPalette.surface, borderRadius: BorderRadius.circular(ReaderPalette.choiceRadius)),
+      child: Center(child: AppIcon(icon, size: 18, color: ReaderPalette.text, stroke: 1.9)),
     ),
   );
+}
+
+/// 目录条目。行高固定 52，`revealChapterRow` 按这个值算滚动位置，不能改。
+///
+/// 不复用 `IosChapterRow`：那个是详情页的样式，强调色用的是暖棕，
+/// 放在这个灰蓝面板里会跳出来。
+class _CatalogRow extends StatelessWidget {
+  const _CatalogRow({super.key, required this.chapter, required this.first, required this.read, required this.current, required this.page, required this.pageCount, required this.onTap});
+
+  final Chapter chapter;
+  final bool first;
+  final bool read;
+  final bool current;
+  final int page;
+  final int pageCount;
+  final VoidCallback onTap;
+
+  static const _extent = 52.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final tag = chapterTag(chapter.name);
+    return Pressable(
+      onTap: onTap,
+      child: Container(
+        height: _extent,
+        margin: current ? const EdgeInsets.symmetric(vertical: 2) : EdgeInsets.zero,
+        padding: EdgeInsets.symmetric(horizontal: current ? 14 : 10),
+        decoration: BoxDecoration(
+          color: current ? ReaderPalette.selected : null,
+          borderRadius: BorderRadius.circular(ReaderPalette.choiceRadius),
+          border: first || current ? null : Border(top: BorderSide(color: ReaderPalette.border, width: .5)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 38,
+              child: Text(
+                '${chapter.index + 1}',
+                style: TextStyle(fontSize: 12, fontFeatures: const [FontFeature.tabularFigures()], color: current ? ReaderPalette.selectedInk : ReaderPalette.muted),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                chapter.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: current ? FontWeight.w600 : FontWeight.w400,
+                  color: current ? ReaderPalette.selectedInk : (read ? ReaderPalette.muted : ReaderPalette.text),
+                ),
+              ),
+            ),
+            if (current)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: ReaderPalette.sheet, borderRadius: BorderRadius.circular(8)),
+                child: Text(
+                  pageCount > 0 ? '在读 ${page.clamp(0, pageCount - 1) + 1}/$pageCount' : '在读',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: ReaderPalette.selectedInk, fontFeatures: const [FontFeature.tabularFigures()]),
+                ),
+              )
+            else ...[
+              if (tag.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(color: ReaderPalette.surface, borderRadius: BorderRadius.circular(6)),
+                  child: Text(tag, style: TextStyle(fontSize: 11, color: ReaderPalette.muted)),
+                ),
+                const SizedBox(width: 8),
+              ],
+              AppIcon(read ? 'check' : 'right', size: read ? 15 : 13, color: ReaderPalette.muted, stroke: 2),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

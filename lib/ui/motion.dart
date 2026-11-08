@@ -125,21 +125,31 @@ class ShiftFadeRoute<T> extends PageRoute<T> {
 
 /* ─────────── 底部面板 ─────────── */
 
+/// 面板遮罩：设计稿 `.sheet-scrim` 是 rgba(0,0,0,.36)。
+///
+/// 遮罩太重会把玻璃背面的内容全压暗，折射就看不出来了——面板会变成一块
+/// 实心灰板。漫画阅读器用更轻的 [kSheetScrimReader]（对应 `.comic-settings
+/// .sheet-scrim{background:#0002}`），阅读时尽量不打断画面。
+const Color kSheetScrim = Color(0x5C000000);
+const Color kSheetScrimReader = Color(0x14000000);
+
 /// 底部面板（阅读设置、目录、阅读外观）：从下方 56px（Android 42px）淡入归位，340ms；
 /// 完成时向下退出 220ms。设计稿表达不了的下拉关闭在这里补上。
-Future<T?> showAppSheet<T>(BuildContext context, WidgetBuilder builder) =>
-    Navigator.of(context).push(_SheetRoute<T>(builder: builder, barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel));
+Future<T?> showAppSheet<T>(BuildContext context, WidgetBuilder builder, {Color scrim = kSheetScrim}) => Navigator.of(context)
+    .push(_SheetRoute<T>(builder: builder, barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel, scrim: scrim));
 
 class _SheetRoute<T> extends PopupRoute<T> {
-  _SheetRoute({required this.builder, required this.barrierLabel});
+  _SheetRoute({required this.builder, required this.barrierLabel, this.scrim = kSheetScrim});
 
   final WidgetBuilder builder;
 
   @override
   final String? barrierLabel;
 
+  final Color scrim;
+
   @override
-  Color? get barrierColor => Colors.black54;
+  Color? get barrierColor => scrim;
 
   @override
   bool get barrierDismissible => true;
