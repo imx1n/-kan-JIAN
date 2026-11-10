@@ -248,13 +248,14 @@ class _IosDetailPageState extends State<IosDetailPage> {
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(_briefOpen ? '收起' : '展开', style: TextStyle(fontSize: 15, color: IosColors.accent)),
                   const SizedBox(width: 2),
-                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: const Duration(milliseconds: 180), child: AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
+                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: Motion.of(context, 180), curve: Motion.ease, child: AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
                 ]),
               ),
             ]),
             const SizedBox(height: 8),
             AnimatedSize(
-              duration: const Duration(milliseconds: 200),
+              duration: Motion.of(context, 200),
+              curve: Motion.ease,
               alignment: Alignment.topCenter,
               child: Text(d.brief,
                   maxLines: _briefOpen ? null : 2,

@@ -68,8 +68,9 @@ class _ReaderViewState extends State<ReaderView> {
   /// 当前停着的条目。用对象身份而不是下标，条目列表变长时下标会挪。
   Object? _anchor;
 
-  /// 恢复流程要落到的条目下标。null 表示当前不在恢复中。
-  int? _restoreTarget;
+  /// 恢复流程要落到的条目。存**对象**而不是下标：预加载完成后上一话的页会
+  /// 插到列表前面，所有下标整体后移，缓存的下标会指到别的页去。
+  Object? _restoreItem;
 
   /// 这次进入是否已经发起过恢复。只发一次，之后交给用户自己滚。
   bool _restoreDone = false;
@@ -121,7 +122,7 @@ class _ReaderViewState extends State<ReaderView> {
     final oldScroll = _scroll;
     _pager = PageController(initialPage: spot.index);
     _scroll = ScrollController();
-    _restoreTarget = null;
+    _restoreItem = null;
     _restoreDone = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       oldPager.dispose();
@@ -213,7 +214,7 @@ class _ReaderViewState extends State<ReaderView> {
 
     if (widget.mode.stacked) {
       // 条漫不强行对齐：用户自己在滚。只有首次进入或换模式才定位。
-      if (_restoreTarget != null) return;
+      if (_restoreItem != null) return;
       if (_anchor == null) {
         _anchor = target;
         _beginRestore();
@@ -255,39 +256,46 @@ class _ReaderViewState extends State<ReaderView> {
   /// 条漫只能靠滚动，而列表是懒构建的。
   void _beginRestore() {
     if (!mounted || !widget.mode.stacked) return;
-    if (_restoreDone || _restoreTarget != null) return;
-    final index = _restingSpot().index;
+    if (_restoreDone || _restoreItem != null) return;
+    final pages = widget.controller.current?.pages;
+    if (pages == null || pages.isEmpty) return;
+    final target = pages[widget.controller.pageIndex.clamp(0, pages.length - 1)];
+    final items = _items;
+    final index = items.indexOf(target);
     if (index <= 0) {
-      // 第 1 页不用找，什么都不做也不会错。
+      // 第 1 页（或目标还没进列表）不用找，什么都不做也不会错。
       _restoreDone = true;
       return;
     }
-    _restoreTarget = index;
+    _restoreItem = target;
     widget.controller.restoring = true;
-    unawaited(_walkTo(index, restore: true));
+    unawaited(_walkTo(target, restore: true));
   }
 
-  /// 逐帧把第 [index] 个条目推进视口。
+  /// 逐帧把 [item] 推进视口。
   ///
   /// 条漫是懒构建的：目标离得远时它根本没被建出来，`Scrollable.ensureVisible`
   /// 拿到 null 就静默什么都不做——这正是「每次进来都是第 1 页」的直接原因。
   /// 所以这里先按「一屏 90%」一帧一帧往下跳，列表随之把后面的条目建出来，
   /// `maxScrollExtent` 跟着增长，直到目标真的出现。
-  Future<void> _walkTo(int index, {required bool restore}) async {
+  ///
+  /// 认**条目对象**而不是下标：预加载完成后上一话的页会插到列表前面，
+  /// 所有下标整体后移，缓存的下标会指到别的页、甚至翻过好几话。
+  Future<void> _walkTo(Object item, {required bool restore}) async {
     var tries = 0;
     while (mounted && tries < 60) {
-      final items = _items;
-      if (index < 0 || index >= items.length) break;
-      final ctx = _keys[items[index]]?.currentContext;
+      final index = _items.indexOf(item);
+      if (index < 0) break;
+      final ctx = _keys[item]?.currentContext;
       if (ctx != null && ctx.mounted) {
         await Scrollable.ensureVisible(ctx, duration: Duration.zero);
         // 图片量出来之后条目高度会变，位置会漂，再对齐一次。
         await WidgetsBinding.instance.endOfFrame;
-        final again = _keys[items[index]]?.currentContext;
+        final again = _keys[item]?.currentContext;
         if (again != null && again.mounted) {
           await Scrollable.ensureVisible(again, duration: Duration.zero);
         }
-        _finishRestore(index, restore: restore);
+        _finishRestore(item, restore: restore);
         return;
       }
       if (!_scroll.hasClients) {
@@ -305,26 +313,26 @@ class _ReaderViewState extends State<ReaderView> {
     _finishRestore(null, restore: restore);
   }
 
-  /// [index] 为 null 表示没能把目标推到视口里。
+  /// [item] 为 null 表示没能把目标推到视口里。
   ///
   /// 失败时**什么都不写**：宁可停在第 1 页，也不能把用户真实的位置覆盖掉。
-  void _finishRestore(int? index, {required bool restore}) {
-    _restoreTarget = null;
+  void _finishRestore(Object? item, {required bool restore}) {
+    _restoreItem = null;
     _restoreDone = true;
     if (!restore) {
-      if (index != null) _adopt(_items[index]);
+      if (item != null) _adopt(item);
       return;
     }
     widget.controller.restoring = false;
-    if (!mounted || index == null) return;
+    if (!mounted || item == null) return;
     // 落定之后才算出「真正停在哪一页」，这时候写盘是安全的。
-    _adopt(_items[index]);
+    _adopt(item);
   }
 
   void _scrollTo(int index) {
     final items = _items;
     if (index < 0 || index >= items.length) return;
-    unawaited(_walkTo(index, restore: false));
+    unawaited(_walkTo(items[index], restore: false));
   }
 
   /// 把一个条目设为当前项。它是别的话的页时，顺手把三话窗口平移过去。
@@ -394,22 +402,27 @@ class _ReaderViewState extends State<ReaderView> {
     return false;
   }
 
-  /// 视口中线当前压在哪个条目上。
-  int? _itemAtViewportMiddle() {
+  /// 从 `ListView` 的渲染树里取出真正承载条目的 sliver。
+  RenderSliverMultiBoxAdaptor? _sliver() {
     final root = _listKey.currentContext?.findRenderObject();
     if (root == null) return null;
-    RenderSliverMultiBoxAdaptor? sliver;
+    RenderSliverMultiBoxAdaptor? found;
     void find(RenderObject o) {
-      if (sliver != null) return;
+      if (found != null) return;
       if (o is RenderSliverMultiBoxAdaptor) {
-        sliver = o;
+        found = o;
         return;
       }
       o.visitChildren(find);
     }
 
     find(root);
-    final s = sliver;
+    return found;
+  }
+
+  /// 视口中线当前压在哪个条目上。
+  int? _itemAtViewportMiddle() {
+    final s = _sliver();
     if (s == null) return null;
 
     final mid = MediaQuery.sizeOf(context).height / 2;

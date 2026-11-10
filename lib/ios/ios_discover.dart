@@ -12,7 +12,6 @@ import '../ui/tokens.dart' show Dock, Space;
 import '../ui/widgets.dart' show CoverImage, Pager, coverHeightFor, kCoverAspect, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
-import 'ios_search.dart';
 import 'ios_theme.dart';
 
 class IosDiscoverPage extends StatefulWidget {
@@ -68,7 +67,9 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             SliverToBoxAdapter(child: SizedBox(height: MediaQuery.paddingOf(context).top)),
             CupertinoSliverRefreshControl(onRefresh: _refresh),
             const SliverToBoxAdapter(child: LargeTitle('发现')),
-            SliverToBoxAdapter(child: _SearchField(onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())))),
+            SliverToBoxAdapter(
+              child: _SearchField(onTap: (rect) => openSearch(context, origin: rect)),
+            ),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.only(top: Space.x2),
@@ -204,23 +205,27 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
 class _SearchField extends StatelessWidget {
   const _SearchField({required this.onTap});
 
-  final VoidCallback onTap;
+  /// 回调带上搜索框自身的屏幕矩形：搜索页从这块区域缩放展开。
+  final ValueChanged<Rect?> onTap;
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.page),
-        child: Pressable(
-          onTap: onTap,
-          semanticLabel: '搜索作品、作者',
-          child: Container(
-            height: 44,
-            decoration: BoxDecoration(color: IosColors.faint, borderRadius: BorderRadius.circular(12)),
-            child: Row(children: [
-              SizedBox(width: 12),
-              AppIcon('search', size: 18, color: IosColors.muted, stroke: 1.9),
-              SizedBox(width: 8),
-              Text('搜索作品、作者', style: TextStyle(fontSize: 17, color: IosColors.muted)),
-            ]),
+        child: Builder(
+          // Builder 拿到的是搜索框自己的 context，rectOf 才能量到它的位置。
+          builder: (inner) => Pressable(
+            onTap: () => onTap(rectOf(inner)),
+            semanticLabel: '搜索作品、作者',
+            child: Container(
+              height: 44,
+              decoration: BoxDecoration(color: IosColors.faint, borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                SizedBox(width: 12),
+                AppIcon('search', size: 18, color: IosColors.muted, stroke: 1.9),
+                SizedBox(width: 8),
+                Text('搜索作品、作者', style: TextStyle(fontSize: 17, color: IosColors.muted)),
+              ]),
+            ),
           ),
         ),
       );
@@ -392,12 +397,13 @@ class _IosNetworkErrorState extends State<IosNetworkError> {
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text('连接详情', style: TextStyle(fontSize: 13, color: IosColors.muted)),
               const SizedBox(width: 4),
-              AnimatedRotation(turns: _open ? .5 : 0, duration: const Duration(milliseconds: 180), child: AppIcon('down', size: 13, color: IosColors.muted, stroke: 2)),
+              AnimatedRotation(turns: _open ? .5 : 0, duration: Motion.of(context, 180), curve: Motion.ease, child: AppIcon('down', size: 13, color: IosColors.muted, stroke: 2)),
             ]),
           ),
         ),
         AnimatedSize(
-          duration: const Duration(milliseconds: 200),
+          duration: Motion.of(context, 200),
+          curve: Motion.ease,
           child: _open
               ? InsetGroup(children: [
                   IosRow(title: '数据源', value: diag?.host ?? Uri.parse(MangaApi.instance.activeHost).host, chevron: false),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -12,7 +14,6 @@ import '../ui/motion.dart';
 import '../ui/tokens.dart' show Dock, Space;
 import '../ui/widgets.dart' show CoverImage, coverHeightFor, kCoverAspect;
 import 'ios_app.dart';
-import 'ios_search.dart';
 import 'ios_theme.dart';
 import 'ios_wenku.dart';
 
@@ -53,10 +54,22 @@ class _IosShelfPageState extends State<IosShelfPage> {
 
   @override
   void dispose() {
+    _sectionTimer?.cancel();
     _store.removeListener(_changed);
     _prefs.removeListener(_changed);
     super.dispose();
   }
+
+  /// 跟着分区一起淡出的内容（筛选条、续读卡片、分组标题、空态）。
+  ///
+  /// 换区时这些整块替换，不淡一下就是硬切。只动透明度：这是同页换数据，
+  /// 不是页面转场，一旦加上位移，一眼就看出「在播动画」。
+  Widget _fade(Widget child) => AnimatedOpacity(
+        opacity: _sectionOpacity,
+        duration: Motion.of(context, 150),
+        curve: Motion.ease,
+        child: child,
+      );
 
   void _changed() {
     if (mounted) setState(() {});
@@ -73,12 +86,33 @@ class _IosShelfPageState extends State<IosShelfPage> {
     return list;
   }
 
+  /// 换区时先淡出、换完再淡入。
+  ///
+  /// 切分区是同一页里换数据，不是导航：不给过渡会「啪」一下全部换掉，
+  /// 像闪了一下；给整页转场又太重。150ms 的淡出淡入刚好够把这次替换藏住。
+  double _sectionOpacity = 1;
+  Timer? _sectionTimer;
+
   /// 换区时筛选回到「全部」：漫画的「有更新」对轻小说没有意义，
   /// 带着上一个区的筛选切过去会出现莫名其妙的空列表。
   void _setSection(int i) {
     if (i == _prefs.shelfSection) return;
-    setState(() => _filter = _Filter.all);
-    _prefs.shelfSection = i;
+    final fade = Motion.of(context, 150);
+    if (fade == Duration.zero) {
+      setState(() => _filter = _Filter.all);
+      _prefs.shelfSection = i;
+      return;
+    }
+    setState(() => _sectionOpacity = 0);
+    _sectionTimer?.cancel();
+    _sectionTimer = Timer(fade, () {
+      if (!mounted) return;
+      setState(() {
+        _filter = _Filter.all;
+        _prefs.shelfSection = i;
+        _sectionOpacity = 1;
+      });
+    });
   }
 
   bool _match(ShelfEntry e) {
@@ -176,51 +210,65 @@ class _IosShelfPageState extends State<IosShelfPage> {
             ),
           ),
           SliverToBoxAdapter(
-            child: TextChips(
-              // 漫画区是「状态」，轻小说区只有「全部 / 在读」——轻小说没有连载状态。
-              // 两区的标签不能只靠下标对齐（同样的 1 号位在漫画区是「有更新」、
-              // 在轻小说区是「在读」），所以这里把筛选项和标签成对写出来。
-              items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
-              selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
-              onSelect: (i) => setState(() => _filter = _filters[i]),
+            child: _fade(
+              TextChips(
+                // 漫画区是「状态」，轻小说区只有「全部 / 在读」——轻小说没有连载状态。
+                // 两区的标签不能只靠下标对齐（同样的 1 号位在漫画区是「有更新」、
+                // 在轻小说区是「在读」），所以这里把筛选项和标签成对写出来。
+                items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
+                selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
+                onSelect: (i) => setState(() => _filter = _filters[i]),
+              ),
             ),
           ),
-          if (resume != null) SliverToBoxAdapter(child: _Resume(entry: resume)),
+          if (resume != null) SliverToBoxAdapter(child: _fade(_Resume(entry: resume))),
           if (!novel && _filter == _Filter.all && updates.isNotEmpty) ...[
-            SliverToBoxAdapter(child: IosSection('有更新', count: '${updates.length}', action: '全部', onAction: () => setState(() => _filter = _Filter.updated))),
-            SliverList.builder(itemCount: updates.length.clamp(0, 3), itemBuilder: (context, i) => _UpdateRow(entry: updates[i], last: i == updates.length.clamp(0, 3) - 1)),
+            SliverToBoxAdapter(
+              child: _fade(IosSection('有更新', count: '${updates.length}', action: '全部', onAction: () => setState(() => _filter = _Filter.updated))),
+            ),
+            SliverList.builder(
+              itemCount: updates.length.clamp(0, 3),
+              itemBuilder: (context, i) => _fade(_UpdateRow(entry: updates[i], last: i == updates.length.clamp(0, 3) - 1)),
+            ),
           ],
           SliverToBoxAdapter(
-            child: IosSection(
-              novel ? '轻小说书架' : '我的藏书',
-              count: '${gridItems.length}',
-              action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
-              actionIcon: 'down',
-              onAction: () async {
-                final i = await showIosChoices(context, title: '排序', options: const ['最近阅读', '更新时间'], selected: _prefs.shelfSort);
-                if (i != null) _prefs.shelfSort = i;
-              },
+            child: _fade(
+              IosSection(
+                novel ? '轻小说书架' : '我的藏书',
+                count: '${gridItems.length}',
+                action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
+                actionIcon: 'down',
+                onAction: () async {
+                  final i = await showIosChoices(context, title: '排序', options: const ['最近阅读', '更新时间'], selected: _prefs.shelfSort);
+                  if (i != null) _prefs.shelfSort = i;
+                },
+              ),
             ),
           ),
           // 只有一本、而且正好是「最近在读」时，网格是空的——这时不显示空态文案，
           // 上方那张续读卡片已经是完整的入口。
           if (gridItems.isEmpty && visible.isEmpty)
-            SliverToBoxAdapter(child: _FilterEmpty(novel: novel, updated: _filter == _Filter.updated))
+            SliverToBoxAdapter(child: _fade(_FilterEmpty(novel: novel, updated: _filter == _Filter.updated)))
           else if (gridItems.isNotEmpty)
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: Space.page),
-              sliver: SliverGrid.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: Space.x3 + 2,
-                  mainAxisSpacing: Space.x4 + 2,
-                  // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
-                  // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
-                  mainAxisExtent:
-                      (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
+            SliverAnimatedOpacity(
+              opacity: _sectionOpacity,
+              duration: Motion.of(context, 150),
+              curve: Motion.ease,
+              sliver: SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.page),
+                sliver: SliverGrid.builder(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: Space.x3 + 2,
+                    mainAxisSpacing: Space.x4 + 2,
+                    // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
+                    // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
+                    mainAxisExtent:
+                        (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
+                  ),
+                  itemCount: gridItems.length,
+                  itemBuilder: (context, i) => _Tile(entry: gridItems[i], onLongPress: () => _entryMenu(gridItems[i])),
                 ),
-                itemCount: gridItems.length,
-                itemBuilder: (context, i) => _Tile(entry: gridItems[i], onLongPress: () => _entryMenu(gridItems[i])),
               ),
             ),
         ],
@@ -493,7 +541,10 @@ class _FirstRunState extends State<_FirstRun> {
           message: '打开作品详情，点一下追更书签。\n新话更新、读到哪页，都帮你记着。',
           actions: [
             AccentButton(label: '去发现', icon: 'arrow', onTap: () => IosShell.tab.value = 1),
-            TextAction(label: '搜索作品', onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage()))),
+            Builder(
+              // 取这块文字自己的位置，搜索页从这里展开。
+              builder: (inner) => TextAction(label: '搜索作品', onTap: () => openSearch(inner, origin: rectOf(inner))),
+            ),
           ],
         ),
         const IosSection('热门推荐', note: '从这里翻开'),

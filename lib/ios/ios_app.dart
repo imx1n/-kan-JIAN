@@ -123,6 +123,9 @@ class IosShell extends StatefulWidget {
   /// 当前页的连续位置（0.0 ~ 2.0），拖拽过程中随手指变化，标签栏选中框据此跟手移动。
   static final pagePos = ValueNotifier<double>(0);
 
+  /// 搜索球的 key。搜索页从它所在的位置「长出来」，所以要拿到它的屏幕矩形。
+  static final searchBallKey = GlobalKey();
+
   /// 测试里关掉启动时的更新检查。
   static bool autoUpdateCheck = true;
 
@@ -376,9 +379,12 @@ class _TabDock extends StatelessWidget {
               if (IosShell.tab.value != i) IosShell.tab.value = i;
             },
             extraButton: GlassTabBarExtraButton(
-              icon: AppIcon('search', size: 25, stroke: 1.8),
+              icon: KeyedSubtree(
+                key: IosShell.searchBallKey,
+                child: AppIcon('search', size: 25, stroke: 1.8),
+              ),
               label: '搜索',
-              onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+              onTap: () => openSearch(context, origin: rectOf(IosShell.searchBallKey.currentContext ?? context)),
             ),
             // 与我们原来的尺寸对齐：左右各 18，高度 64，标签栏和搜索按钮同一条玻璃。
             horizontalPadding: 18,
@@ -427,15 +433,18 @@ class _TabDock extends StatelessWidget {
                     return Stack(
                       children: [
                         // 选中块跟着连续位置走（拖动时也跟手），不是翻完才跳一格。
-                        AnimatedPositioned(
-                          duration: Motion.of(context, 260),
+                        // 只做位移：宽度固定一格，AnimatedSlide 走 transform，
+                        // 不像 AnimatedPositioned 那样每帧重排。
+                        AnimatedSlide(
+                          duration: Motion.of(context, 240),
                           curve: Motion.ease,
-                          left: w * pos,
-                          top: 0,
-                          bottom: 0,
-                          width: w,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                          offset: Offset(pos, 0),
+                          child: SizedBox(
+                            width: w,
+                            height: double.infinity,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(color: const Color(0x1A747070), borderRadius: BorderRadius.circular(27)),
+                            ),
                           ),
                         ),
                         Row(
@@ -495,12 +504,17 @@ class _TabDock extends StatelessWidget {
             const SizedBox(width: 12),
             Pressable(
               semanticLabel: '搜索',
-              onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage())),
+              onTap: () => openSearch(context, origin: rectOf(IosShell.searchBallKey.currentContext ?? context)),
               child: Glass(
                 radius: 32,
                 child: SizedBox.square(
                   dimension: 64,
-                  child: Center(child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8)),
+                  child: Center(
+                    child: KeyedSubtree(
+                      key: IosShell.searchBallKey,
+                      child: AppIcon('search', size: 25, color: IosColors.ink, stroke: 1.8),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -517,6 +531,11 @@ class _TabDock extends StatelessWidget {
 ComicBrief briefOfEntry(ShelfEntry e) => ComicBrief(name: e.name, pathWord: e.id, cover: e.cover, authors: [e.author]);
 
 Future<void> iosOpenDetail(BuildContext context, ComicBrief comic) => Navigator.of(context).push(appRoute((_) => IosDetailPage(comic: comic)));
+
+/// 打开搜索页。[origin] 是触发它的控件的屏幕矩形——搜索页从那个点缩放展开，
+/// 而不是整页侧滑进来。拿不到就传 null，按屏幕中心缩放。
+Future<void> openSearch(BuildContext context, {Rect? origin}) =>
+    Navigator.of(context).push(searchRoute((_) => const IosSearchPage(), origin: origin));
 
 Future<void> iosOpenReader(BuildContext context, {required ComicBrief comic, required String group, required String chapterUuid, int initialPage = 0}) =>
     Navigator.of(context).push(readerRoute((_) => IosReaderPage(comic: comic, group: group, chapterUuid: chapterUuid, initialPage: initialPage)));
