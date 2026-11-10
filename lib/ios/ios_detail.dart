@@ -7,7 +7,7 @@ import '../core/store.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
-import '../ui/widgets.dart' show CoverImage, revealChapterRow;
+import '../ui/widgets.dart' show CoverImage, coverHeightFor, revealChapterRow;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
 import 'ios_theme.dart';
@@ -182,7 +182,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         DecoratedBox(
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: const [BoxShadow(color: Color(0x2E1A1A28), blurRadius: 14, offset: Offset(0, 6))]),
-          child: CoverImage(url: _comic.cover, title: _comic.name, width: 112, height: 156, radius: 6),
+          child: CoverImage(url: _comic.cover, title: _comic.name, width: 112, height: coverHeightFor(112), radius: 6),
         ),
         const SizedBox(width: 18),
         Expanded(

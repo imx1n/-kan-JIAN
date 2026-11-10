@@ -8,7 +8,7 @@ import '../core/wenku.dart';
 import '../core/wenku_models.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
-import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
+import '../ui/widgets.dart' show CoverImage, Pager, coverHeightFor, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
 import 'ios_theme.dart';
@@ -290,7 +290,7 @@ class _NovelRow extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(left: 20),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Padding(padding: const EdgeInsets.only(top: 10), child: CoverImage(url: book.cover, title: book.name, width: 64, height: 86, radius: 5)),
+            Padding(padding: const EdgeInsets.only(top: 10), child: CoverImage(url: book.cover, title: book.name, width: 64, height: coverHeightFor(64), radius: 5)),
             const SizedBox(width: 14),
             Expanded(
               child: Container(
@@ -340,7 +340,7 @@ class _ResultRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(left: 20),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(padding: const EdgeInsets.only(top: 10), child: CoverImage(url: comic.cover, title: comic.name, width: 64, height: 86, radius: 5)),
+          Padding(padding: const EdgeInsets.only(top: 10), child: CoverImage(url: comic.cover, title: comic.name, width: 64, height: coverHeightFor(64), radius: 5)),
           const SizedBox(width: 14),
           Expanded(
             child: Container(

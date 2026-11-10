@@ -36,6 +36,14 @@ class ReaderController extends ChangeNotifier {
   /// 用 ValueNotifier 而不是回调，是因为跳转可能在 widget 还没建好时发出。
   final seek = ValueNotifier<int?>(null);
 
+  /// 正在把上次的位置恢复出来。
+  ///
+  /// 条漫是懒构建的，`initialScrollOffset` 会在首帧被 `maxScrollExtent`
+  /// 夹回前几页；恢复只能靠「逐帧往下推、直到目标条目被建出来」。
+  /// 这个过程里视口中线扫过的页**不是**用户读到的页，所以这段时间
+  /// 必须禁止 adopt 和写盘，否则错误位置会把真实进度覆盖掉。
+  bool restoring = false;
+
   ReaderChapter? get current => _curr;
   ReaderChapter? get previous => _prev;
   ReaderChapter? get next => _next;

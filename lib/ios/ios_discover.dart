@@ -9,7 +9,7 @@ import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart' show Dock, Space;
-import '../ui/widgets.dart' show CoverImage, Pager, onScrollEnd;
+import '../ui/widgets.dart' show CoverImage, Pager, coverHeightFor, kCoverAspect, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
 import 'ios_search.dart';
@@ -153,7 +153,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
               crossAxisCount: 3,
               crossAxisSpacing: Space.x3 + 2,
               mainAxisSpacing: Space.x4 + 2,
-              mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + Space.x2 + 40,
+              mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + Space.x2 + 40,
             ),
             itemCount: pager.items.isEmpty && pager.loading ? 6 : pager.items.length,
             itemBuilder: (context, i) => pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: pager.items[i]),
@@ -178,17 +178,17 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             itemBuilder: (context, i) => SizedBox(
               width: 104,
               child: list == null
-                  ? const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Redacted(width: 104, height: 140),
-                      SizedBox(height: 8),
-                      Redacted(width: 84, height: 15),
-                      SizedBox(height: 6),
-                      Redacted(width: 56, height: 13),
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Redacted(width: 104, height: coverHeightFor(104)),
+                      const SizedBox(height: 8),
+                      const Redacted(width: 84, height: 15),
+                      const SizedBox(height: 6),
+                      const Redacted(width: 56, height: 13),
                     ])
                   : Pressable(
                       onTap: () => iosOpenDetail(context, list[i]),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        CoverImage(url: list[i].cover, title: list[i].name, width: 104, height: 140, radius: 6),
+                        CoverImage(url: list[i].cover, title: list[i].name, width: 104, height: coverHeightFor(104), radius: 6),
                         const SizedBox(height: 7),
                         Text(list[i].name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, height: 1.3, fontWeight: FontWeight.w600, color: IosColors.ink)),
                         const SizedBox(height: 2),
@@ -256,7 +256,7 @@ class _RankRow extends StatelessWidget {
             child: Text('${r.sort}', textAlign: TextAlign.center, style: TextStyle(fontSize: top ? 20 : 17, fontWeight: FontWeight.w600, color: top ? IosColors.accent : IosColors.muted)),
           ),
           const SizedBox(width: 12),
-          CoverImage(url: r.comic.cover, title: r.comic.name, width: 46, height: 62, radius: 4),
+          CoverImage(url: r.comic.cover, title: r.comic.name, width: 46, height: coverHeightFor(46), radius: 4),
           const SizedBox(width: 12),
           Expanded(
             child: Container(
@@ -293,7 +293,7 @@ class _GridTile extends StatelessWidget {
         onTap: () => iosOpenDetail(context, comic),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           AspectRatio(
-            aspectRatio: 3 / 4,
+            aspectRatio: 1 / kCoverAspect,
             child: LayoutBuilder(builder: (context, c) => CoverImage(url: comic.cover, title: comic.name, width: c.maxWidth, height: c.maxHeight, radius: 6)),
           ),
           const SizedBox(height: 7),
@@ -309,7 +309,7 @@ class _GridPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        AspectRatio(aspectRatio: 3 / 4, child: Redacted(height: double.infinity)),
+        AspectRatio(aspectRatio: 1 / kCoverAspect, child: Redacted(height: double.infinity)),
         SizedBox(height: 8),
         Redacted(width: 80, height: 14),
       ]);
@@ -319,18 +319,18 @@ class _RowPlaceholder extends StatelessWidget {
   const _RowPlaceholder();
 
   @override
-  Widget build(BuildContext context) => const Padding(
-        padding: EdgeInsets.fromLTRB(Space.page, 10, Space.page, 10),
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(Space.page, 10, Space.page, 10),
         child: Row(children: [
-          Redacted(width: 22, height: 20),
-          SizedBox(width: 12),
-          Redacted(width: 46, height: 62, radius: 4),
-          SizedBox(width: 12),
+          const Redacted(width: 22, height: 20),
+          const SizedBox(width: 12),
+          Redacted(width: 46, height: coverHeightFor(46), radius: 4),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              FractionallySizedBox(widthFactor: .7, child: Redacted(height: 16)),
-              SizedBox(height: 8),
-              FractionallySizedBox(widthFactor: .45, child: Redacted(height: 13)),
+              const FractionallySizedBox(widthFactor: .7, child: Redacted(height: 16)),
+              const SizedBox(height: 8),
+              const FractionallySizedBox(widthFactor: .45, child: Redacted(height: 13)),
             ]),
           ),
         ]),
@@ -453,7 +453,7 @@ class _IosLatestPageState extends State<IosLatestPage> {
                         crossAxisCount: 3,
                         crossAxisSpacing: Space.x3 + 2,
                         mainAxisSpacing: Space.x4 + 2,
-                        mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + Space.x2 + 40,
+                        mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + Space.x2 + 40,
                       ),
                       itemCount: _pager.items.isEmpty && _pager.loading ? 9 : _pager.items.length,
                       itemBuilder: (context, i) => _pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: _pager.items[i]),

@@ -155,6 +155,9 @@ class _IosReaderPageState extends State<IosReaderPage> {
   }
 
   void _save() {
+    // 条漫恢复上次位置的过程中，视口中线扫过的是「路过」的页而不是读到的那一页。
+    // 这段时间写盘会把用户真实的位置覆盖成第 1 页——这正是「每次进来都是 1」的来源。
+    if (_ctl.restoring) return;
     final c = _ctl.current;
     final pages = c?.pages;
     if (c == null || pages == null || pages.isEmpty || c.locked) return;
