@@ -92,4 +92,38 @@ void main() {
     ));
     expect(d, Duration.zero);
   });
+
+  testWidgets('搜索页：进场 260 / 退场 160，退场更快', (t) async {
+    final route = searchRoute<void>((_) => const SizedBox()) as PageRoute<void>;
+    expect(route.transitionDuration, Motion.ms(260));
+    expect(route.reverseTransitionDuration, Motion.ms(160));
+    expect(route.reverseTransitionDuration, lessThan(route.transitionDuration));
+  });
+
+  testWidgets('搜索页：从触发点展开，结束后铺满且不重新挂载', (t) async {
+    var inits = 0;
+    await t.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (c) => Align(
+          alignment: Alignment.bottomRight,
+          child: SizedBox(
+            width: 56,
+            height: 56,
+            child: TextButton(
+              onPressed: () => Navigator.of(c).push(searchRoute((_) => _Probe(onInit: () => inits++), origin: rectOf(c))),
+              child: const Text('go'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    await t.tap(find.text('go'));
+    await t.pumpAndSettle();
+    // 转场结束：页面在、且只挂载过一次（没被结构变化重建）
+    expect(find.text('probe'), findsOneWidget);
+    expect(inits, 1);
+    // 结束时缩放必须是 1：留在 0.92 就是整页永远偏小
+    final scales = t.widgetList<Transform>(find.byType(Transform)).map((w) => w.transform.getMaxScaleOnAxis()).toList();
+    expect(scales.every((s) => (s - 1).abs() < 0.001), isTrue);
+  });
 }

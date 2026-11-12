@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show ImageFilter;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
@@ -156,6 +157,9 @@ class _IosReaderPageState extends State<IosReaderPage> {
   }
 
   void _save() {
+    // 条漫恢复上次位置的过程中，视口中线扫过的是「路过」的页而不是读到的那一页。
+    // 这段时间写盘会把用户真实的位置覆盖成第 1 页——这正是「每次进来都是 1」的来源。
+    if (_ctl.restoring) return;
     final c = _ctl.current;
     final pages = c?.pages;
     if (c == null || pages == null || pages.isEmpty || c.locked) return;
@@ -217,6 +221,23 @@ class _IosReaderPageState extends State<IosReaderPage> {
               switchInCurve: Motion.ease,
               switchOutCurve: Motion.ease,
               // 两套视图叠着淡入淡出，不位移：翻页轴不同，横移会打架。
+              //
+              // 但纯交叉淡化会让人同时看见两张排版不同的页面（左图 4 格、
+              // 右图 6 格），眼睛读成「两个东西在交换」。过渡中给一点模糊，
+              // 把两个状态糊在一起，才读得成「一页变成了一页」。
+              transitionBuilder: (child, animation) => AnimatedBuilder(
+                animation: animation,
+                child: child,
+                builder: (context, c) {
+                  final v = animation.value;
+                  if (v >= 1) return c!;
+                  final sigma = 2 * (1 - v) * (Motion.reduced(context) ? 0 : 1);
+                  return Opacity(
+                    opacity: v,
+                    child: sigma <= 0.01 ? c! : ImageFiltered(imageFilter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma), child: c),
+                  );
+                },
+              ),
               layoutBuilder: (current, previous) => Stack(
                 fit: StackFit.expand,
                 children: [

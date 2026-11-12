@@ -8,7 +8,7 @@ import '../core/store.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
-import '../ui/widgets.dart' show CoverImage, revealChapterRow;
+import '../ui/widgets.dart' show CoverImage, coverHeightFor, revealChapterRow;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
 import 'ios_theme.dart';
@@ -185,7 +185,7 @@ class _IosDetailPageState extends State<IosDetailPage> {
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         DecoratedBox(
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: const [BoxShadow(color: Color(0x2E1A1A28), blurRadius: 14, offset: Offset(0, 6))]),
-          child: CoverImage(url: _comic.cover, title: _comic.name, width: 112, height: 156, radius: 6),
+          child: CoverImage(url: _comic.cover, title: _comic.name, width: 112, height: coverHeightFor(112), radius: 6),
         ),
         const SizedBox(width: 18),
         Expanded(
@@ -251,13 +251,14 @@ class _IosDetailPageState extends State<IosDetailPage> {
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(_briefOpen ? '收起' : '展开', style: TextStyle(fontSize: 15, color: IosColors.accent)),
                   const SizedBox(width: 2),
-                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: const Duration(milliseconds: 180), child: AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
+                  AnimatedRotation(turns: _briefOpen ? .5 : 0, duration: Motion.of(context, 180), curve: Motion.ease, child: AppIcon('down', size: 13, color: IosColors.accent, stroke: 2)),
                 ]),
               ),
             ]),
             const SizedBox(height: 8),
             AnimatedSize(
-              duration: const Duration(milliseconds: 200),
+              duration: Motion.of(context, 200),
+              curve: Motion.ease,
               alignment: Alignment.topCenter,
               child: Text(d.brief,
                   maxLines: _briefOpen ? null : 2,

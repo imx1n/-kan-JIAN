@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -10,9 +12,8 @@ import '../ui/format.dart' show formatDay;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart' show Dock, Space;
-import '../ui/widgets.dart' show CoverImage;
+import '../ui/widgets.dart' show CoverImage, coverHeightFor, kCoverAspect;
 import 'ios_app.dart';
-import 'ios_search.dart';
 import 'ios_theme.dart';
 import 'ios_wenku.dart';
 
@@ -23,13 +24,25 @@ class IosShelfPage extends StatefulWidget {
   State<IosShelfPage> createState() => _IosShelfPageState();
 }
 
-enum _Filter { all, updated, ongoing, finished, novel }
+/// 顶层分区：漫画 / 轻小说。
+///
+/// 以前只有一层筛选条：`全部 有更新 连载中 已完结 轻小说`。前四项是漫画的
+/// 状态维度，最后一项却是作品类型，混在一行里结果是：想看轻小说要在五个
+/// 选项里找最后一个；轻小说被塞进同一个三列网格和漫画并排；而「连载中 /
+/// 已完结」对轻小说永远是空的。
+///
+/// 类型是上位概念，状态是下位概念，所以拆成两级。
+enum _Section { manga, novel }
+
+enum _Filter { all, updated, ongoing, finished, reading }
 
 class _IosShelfPageState extends State<IosShelfPage> {
   final _store = LibraryStore.instance;
   final _sync = ShelfSync.instance;
   final _prefs = ReaderPrefs.instance;
   _Filter _filter = _Filter.all;
+
+  _Section get _section => _prefs.shelfSection == 1 ? _Section.novel : _Section.manga;
 
   @override
   void initState() {
@@ -41,10 +54,22 @@ class _IosShelfPageState extends State<IosShelfPage> {
 
   @override
   void dispose() {
+    _sectionTimer?.cancel();
     _store.removeListener(_changed);
     _prefs.removeListener(_changed);
     super.dispose();
   }
+
+  /// 跟着分区一起淡出的内容（筛选条、续读卡片、分组标题、空态）。
+  ///
+  /// 换区时这些整块替换，不淡一下就是硬切。只动透明度：这是同页换数据，
+  /// 不是页面转场，一旦加上位移，一眼就看出「在播动画」。
+  Widget _fade(Widget child) => AnimatedOpacity(
+        opacity: _sectionOpacity,
+        duration: Motion.of(context, 150),
+        curve: Motion.ease,
+        child: child,
+      );
 
   void _changed() {
     if (mounted) setState(() {});
@@ -61,12 +86,64 @@ class _IosShelfPageState extends State<IosShelfPage> {
     return list;
   }
 
-  bool _match(ShelfEntry e) => switch (_filter) {
-        _Filter.all => true,
-        _Filter.updated => e.hasUpdate,
-        _Filter.ongoing => e.kind == ShelfKind.manga && !e.finished,
-        _Filter.finished => e.kind == ShelfKind.manga && e.finished,
-        _Filter.novel => e.kind == ShelfKind.novel,
+  /// 换区时先淡出、换完再淡入。
+  ///
+  /// 切分区是同一页里换数据，不是导航：不给过渡会「啪」一下全部换掉，
+  /// 像闪了一下；给整页转场又太重。150ms 的淡出淡入刚好够把这次替换藏住。
+  double _sectionOpacity = 1;
+  Timer? _sectionTimer;
+
+  /// 换区时筛选回到「全部」：漫画的「有更新」对轻小说没有意义，
+  /// 带着上一个区的筛选切过去会出现莫名其妙的空列表。
+  void _setSection(int i) {
+    if (i == _prefs.shelfSection) return;
+    final fade = Motion.of(context, 150);
+    if (fade == Duration.zero) {
+      setState(() => _filter = _Filter.all);
+      _prefs.shelfSection = i;
+      return;
+    }
+    setState(() => _sectionOpacity = 0);
+    _sectionTimer?.cancel();
+    _sectionTimer = Timer(fade, () {
+      if (!mounted) return;
+      setState(() {
+        _filter = _Filter.all;
+        _prefs.shelfSection = i;
+        _sectionOpacity = 1;
+      });
+    });
+  }
+
+  bool _match(ShelfEntry e) {
+    if ((e.kind == ShelfKind.novel) != (_section == _Section.novel)) return false;
+    return switch (_filter) {
+      _Filter.all => true,
+      _Filter.updated => e.hasUpdate,
+      _Filter.ongoing => e.kind == ShelfKind.manga && !e.finished,
+      _Filter.finished => e.kind == ShelfKind.manga && e.finished,
+      _Filter.reading => e.started,
+    };
+  }
+
+  /// 当前区可选的筛选项，顺序就是胶囊的顺序。
+  List<_Filter> get _filters =>
+      _section == _Section.novel ? const [_Filter.all, _Filter.reading] : const [_Filter.all, _Filter.updated, _Filter.ongoing, _Filter.finished];
+
+  String _labelOf(_Filter f) => switch (f) {
+        _Filter.all => '全部',
+        _Filter.updated => '有更新',
+        _Filter.ongoing => '连载中',
+        _Filter.finished => '已完结',
+        _Filter.reading => '在读',
+      };
+
+  /// 只有「全部」和「有更新」带数字：连载中 / 已完结 / 在读是状态，
+  /// 心里有数就行，标上数字反而让五个胶囊挤成一片。
+  int? _countOf(_Filter f, List<ShelfEntry> items) => switch (f) {
+        _Filter.all => items.length,
+        _Filter.updated => items.where((e) => e.hasUpdate).length,
+        _ => null,
       };
 
   Future<void> _menu() async {
@@ -98,13 +175,16 @@ class _IosShelfPageState extends State<IosShelfPage> {
   @override
   Widget build(BuildContext context) {
     final all = _sorted;
-    final visible = [for (final e in all) if (_match(e)) e];
-    final updates = [for (final e in all) if (e.hasUpdate) e];
+    final inSection = [for (final e in all) if ((e.kind == ShelfKind.novel) == (_section == _Section.novel)) e];
+    final visible = [for (final e in inSection) if (_match(e)) e];
+    // 「有更新」只统计漫画：源站给轻小说的 `hasUpdate` 恒为 false，统计出来也是 0。
+    final updates = [for (final e in inSection) if (e.hasUpdate) e];
     final resume = visible.where((e) => e.started).firstOrNull;
     // 「最近在读」已经在上面用大卡片展示过，藏书网格里就不再出现第二遍。
     // 同一本书两个尺寸、两种封面呈现方式并排摆着，视觉上非常撕裂。
     final gridItems = [for (final e in visible) if (!identical(e, resume)) e];
     final top = MediaQuery.paddingOf(context).top;
+    final novel = _section == _Section.novel;
     return CustomScrollView(
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
       slivers: [
@@ -114,49 +194,81 @@ class _IosShelfPageState extends State<IosShelfPage> {
         if (all.isEmpty)
           const SliverToBoxAdapter(child: _FirstRun())
         else ...[
-          SliverToBoxAdapter(
-            child: TextChips(
-              items: [('全部', all.length, false), ('有更新', updates.length, updates.isNotEmpty), ('连载中', null, false), ('已完结', null, false), ('轻小说', null, false)],
-              selected: _filter.index,
-              onSelect: (i) => setState(() => _filter = _Filter.values[i]),
+          // 顶层分区。漫画 / 轻小说各有自己的筛选维度和续读卡片。
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.x1),
+            sliver: SliverToBoxAdapter(
+              child: IosSegmented(
+                options: const ['漫画', '轻小说'],
+                selected: _section.index,
+                onChanged: _setSection,
+                counts: [
+                  all.where((e) => e.kind == ShelfKind.manga).length,
+                  all.where((e) => e.kind == ShelfKind.novel).length,
+                ],
+              ),
             ),
           ),
-          if (resume != null) SliverToBoxAdapter(child: _Resume(entry: resume)),
-          if (_filter == _Filter.all && updates.isNotEmpty) ...[
-            SliverToBoxAdapter(child: IosSection('有更新', count: '${updates.length}', action: '全部', onAction: () => setState(() => _filter = _Filter.updated))),
-            SliverList.builder(itemCount: updates.length.clamp(0, 3), itemBuilder: (context, i) => _UpdateRow(entry: updates[i], last: i == updates.length.clamp(0, 3) - 1)),
+          SliverToBoxAdapter(
+            child: _fade(
+              TextChips(
+                // 漫画区是「状态」，轻小说区只有「全部 / 在读」——轻小说没有连载状态。
+                // 两区的标签不能只靠下标对齐（同样的 1 号位在漫画区是「有更新」、
+                // 在轻小说区是「在读」），所以这里把筛选项和标签成对写出来。
+                items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
+                selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
+                onSelect: (i) => setState(() => _filter = _filters[i]),
+              ),
+            ),
+          ),
+          if (resume != null) SliverToBoxAdapter(child: _fade(_Resume(entry: resume))),
+          if (!novel && _filter == _Filter.all && updates.isNotEmpty) ...[
+            SliverToBoxAdapter(
+              child: _fade(IosSection('有更新', count: '${updates.length}', action: '全部', onAction: () => setState(() => _filter = _Filter.updated))),
+            ),
+            SliverList.builder(
+              itemCount: updates.length.clamp(0, 3),
+              itemBuilder: (context, i) => _fade(_UpdateRow(entry: updates[i], last: i == updates.length.clamp(0, 3) - 1)),
+            ),
           ],
           SliverToBoxAdapter(
-            child: IosSection(
-              '我的藏书',
-              count: '${gridItems.length}',
-              action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
-              actionIcon: 'down',
-              onAction: () async {
-                final i = await showIosChoices(context, title: '排序', options: const ['最近阅读', '更新时间'], selected: _prefs.shelfSort);
-                if (i != null) _prefs.shelfSort = i;
-              },
+            child: _fade(
+              IosSection(
+                novel ? '轻小说书架' : '我的藏书',
+                count: '${gridItems.length}',
+                action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
+                actionIcon: 'down',
+                onAction: () async {
+                  final i = await showIosChoices(context, title: '排序', options: const ['最近阅读', '更新时间'], selected: _prefs.shelfSort);
+                  if (i != null) _prefs.shelfSort = i;
+                },
+              ),
             ),
           ),
           // 只有一本、而且正好是「最近在读」时，网格是空的——这时不显示空态文案，
           // 上方那张续读卡片已经是完整的入口。
           if (gridItems.isEmpty && visible.isEmpty)
-            SliverToBoxAdapter(child: _FilterEmpty(novel: _filter == _Filter.novel, updated: _filter == _Filter.updated))
+            SliverToBoxAdapter(child: _fade(_FilterEmpty(novel: novel, updated: _filter == _Filter.updated)))
           else if (gridItems.isNotEmpty)
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: Space.page),
-              sliver: SliverGrid.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: Space.x3 + 2,
-                  mainAxisSpacing: Space.x4 + 2,
-                  // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
-                  // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
-                  mainAxisExtent:
-                      (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * 4 / 3 + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
+            SliverAnimatedOpacity(
+              opacity: _sectionOpacity,
+              duration: Motion.of(context, 150),
+              curve: Motion.ease,
+              sliver: SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.page),
+                sliver: SliverGrid.builder(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: Space.x3 + 2,
+                    mainAxisSpacing: Space.x4 + 2,
+                    // 高度 = 封面 + 文字块。文字块由 _Tile 自己算（行高写死），
+                    // 这里不能再手抄一份魔术数——两边只要差 1px 就会报溢出。
+                    mainAxisExtent:
+                        (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + _Tile.spaceBelowCover(MediaQuery.textScalerOf(context)),
+                  ),
+                  itemCount: gridItems.length,
+                  itemBuilder: (context, i) => _Tile(entry: gridItems[i], onLongPress: () => _entryMenu(gridItems[i])),
                 ),
-                itemCount: gridItems.length,
-                itemBuilder: (context, i) => _Tile(entry: gridItems[i], onLongPress: () => _entryMenu(gridItems[i])),
               ),
             ),
         ],
@@ -175,15 +287,24 @@ class _Resume extends StatelessWidget {
 
   final ShelfEntry entry;
 
-  static const _coverW = 74.0;
-  static const _coverH = _coverW * 417 / 299;
+  /// 封面宽度 = 藏书网格一列的宽度。
+  ///
+  /// 续读卡片比网格里的书大一号是层级需要，但既然都是封面，宽度就和下面
+  /// 第一列对齐、比例走同一个 [kCoverAspect]——左边缘落在同一条线上，
+  /// 看起来是「同一本书的放大版」，而不是另一个尺寸的封面。
+  static double coverWidth(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    return (w - Space.page * 2 - (Space.x3 + 2) * 2) / 3;
+  }
 
   @override
   Widget build(BuildContext context) {
     final e = entry;
+    final coverW = coverWidth(context);
+    final coverH = coverHeightFor(coverW);
     final where = e.kind == ShelfKind.manga && e.pageCount > 0 ? '${e.chapterName} · ${e.page + 1} / ${e.pageCount} 页' : (e.chapterName ?? '');
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      padding: const EdgeInsets.fromLTRB(Space.page, Space.x3, Space.page, 0),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Pressable(
           onTap: () => e.kind == ShelfKind.manga ? iosOpenDetail(context, briefOfEntry(e)) : iosContinue(context, e),
@@ -193,10 +314,10 @@ class _Resume extends StatelessWidget {
               boxShadow: const [BoxShadow(color: Color(0x14202124), blurRadius: 9, offset: Offset(0, 3))],
             ),
             child: SizedBox(
-              width: _coverW,
-              height: _coverH,
+              width: coverW,
+              height: coverH,
               child: Stack(children: [
-                CoverImage(url: e.cover, title: e.name, width: _coverW, height: _coverH, radius: 6),
+                CoverImage(url: e.cover, title: e.name, width: coverW, height: coverH, radius: 6),
                 // 内描边：浅色封面不至于和页面底色糊在一起。
                 Positioned.fill(
                   child: IgnorePointer(
@@ -267,7 +388,7 @@ class _UpdateRow extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(left: 20),
           child: Row(children: [
-            CoverImage(url: entry.cover, title: entry.name, width: 40, height: 54, radius: 4),
+            CoverImage(url: entry.cover, title: entry.name, width: 40, height: coverHeightFor(40), radius: 4),
             const SizedBox(width: 12),
             Expanded(
               child: Container(
@@ -359,7 +480,17 @@ class _Tile extends StatelessWidget {
           ),
         ),
         SizedBox(height: _gapAfterCover),
-        Text(e.name, maxLines: _nameLines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _nameSize, height: _nameLine, color: IosColors.ink)),
+        // 标题固定占满两行的高度，即使只有一行字也要占住。
+        //
+        // 这里是「漫画和轻小说封面大小不一」的真正原因：标题在 `maxLines: 2`
+        // 下只占内容需要的高度，一行的书名（雨停之前）拿 1 行、两行的
+        // （魔都精兵的奴隸）拿 2 行，多出来的那一行就被上面的 `Expanded`
+        // 封面吃掉了——同一行里小说的封面比漫画高一整行文字。
+        // 固定成两行之后，每个格子的封面高度和比例完全一致。
+        SizedBox(
+          height: MediaQuery.textScalerOf(context).scale(_nameSize) * _nameLine * _nameLines,
+          child: Text(e.name, maxLines: _nameLines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _nameSize, height: _nameLine, color: IosColors.ink)),
+        ),
         const SizedBox(height: _gapNameMeta),
         Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _metaSize, height: _metaLine, color: IosColors.muted)),
       ]),
@@ -410,7 +541,10 @@ class _FirstRunState extends State<_FirstRun> {
           message: '打开作品详情，点一下追更书签。\n新话更新、读到哪页，都帮你记着。',
           actions: [
             AccentButton(label: '去发现', icon: 'arrow', onTap: () => IosShell.tab.value = 1),
-            TextAction(label: '搜索作品', onTap: () => Navigator.of(context).push(appRoute((_) => const IosSearchPage()))),
+            Builder(
+              // 取这块文字自己的位置，搜索页从这里展开。
+              builder: (inner) => TextAction(label: '搜索作品', onTap: () => openSearch(inner, origin: rectOf(inner))),
+            ),
           ],
         ),
         const IosSection('热门推荐', note: '从这里翻开'),
@@ -428,12 +562,12 @@ class _FirstRunState extends State<_FirstRun> {
                   if (i > 0) const SizedBox(width: 12),
                   Expanded(
                     child: items == null || i >= items.length
-                        ? const AspectRatio(aspectRatio: 3 / 4, child: Redacted(height: double.infinity))
+                        ? const AspectRatio(aspectRatio: 1 / kCoverAspect, child: Redacted(height: double.infinity))
                         : Pressable(
                             onTap: () => iosOpenDetail(context, items[i].comic),
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               AspectRatio(
-                                aspectRatio: 3 / 4,
+                                aspectRatio: 1 / kCoverAspect,
                                 child: LayoutBuilder(builder: (context, c) => CoverImage(url: items[i].comic.cover, title: items[i].comic.name, width: c.maxWidth, height: c.maxHeight, radius: 6)),
                               ),
                               const SizedBox(height: 7),

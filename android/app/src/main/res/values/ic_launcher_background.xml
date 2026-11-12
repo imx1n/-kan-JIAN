@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- #282828：和图标卡片底色一致，遮罩切出来的边缘不会看出接缝 -->
+    <color name="ic_launcher_background">#282828</color>
+</resources>

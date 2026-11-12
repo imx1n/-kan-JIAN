@@ -361,18 +361,21 @@ class IosSegmented extends StatelessWidget {
           final w = c.maxWidth / options.length;
           return Stack(
             children: [
-              AnimatedPositioned(
-                duration: Motion.of(context, 220),
+              // 选中块只做位移。之前用 AnimatedPositioned 动 left + width，
+              // 每帧都要重新排版；这里宽度是固定的 1/N，只平移，走的是合成。
+              AnimatedSlide(
+                duration: Motion.of(context, 200),
                 curve: Motion.ease,
-                left: w * selected,
-                top: 0,
-                bottom: 0,
-                width: w,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: IosColors.surface,
-                    borderRadius: BorderRadius.circular((compact ? 11 : 12) - 3),
-                    boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 4, offset: Offset(0, 1))],
+                offset: Offset(selected.toDouble(), 0),
+                child: SizedBox(
+                  width: w,
+                  height: double.infinity,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: IosColors.surface,
+                      borderRadius: BorderRadius.circular((compact ? 11 : 12) - 3),
+                      boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 4, offset: Offset(0, 1))],
+                    ),
                   ),
                 ),
               ),
@@ -548,7 +551,8 @@ class TextChips extends StatelessWidget {
               haptic: true,
               onTap: () => onSelect(i),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
+                duration: Motion.of(context, 180),
+                curve: Motion.ease,
                 // 胶囊左右各多 1px，页面有 4 的负向修正时也不会看起来偏。
                 padding: const EdgeInsets.symmetric(horizontal: 13),
                 // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。

@@ -39,6 +39,88 @@ Route<T> appRoute<T>(WidgetBuilder builder) => Motion.android ? ShiftFadeRoute<T
 /// 也不挂左缘返回手势：它会和横向翻页抢手势。返回用左上角按钮或系统返回。
 Route<T> readerRoute<T>(WidgetBuilder builder) => ShiftFadeRoute<T>(builder: builder, distance: 0);
 
+/// 搜索页：从触发它的那个控件「长出来」，而不是整页侧滑进来。
+///
+/// 搜索不是往下一层钻，它是从放大镜 / 搜索框那儿铺开的一块浮层。整页侧滑
+/// 会让它读成「换了个页面」，还暗示左边缘能划回去——但搜索页没有下级，
+/// 那个手势是空的。
+///
+/// [origin] 是触发控件的全局矩形（用 [rectOf] 取）。给了就从那个点缩放，
+/// 没给就按屏幕中心缩放。
+Route<T> searchRoute<T>(WidgetBuilder builder, {Rect? origin}) =>
+    _GrowFadeRoute<T>(builder: builder, origin: origin);
+
+/// 取一个控件在屏幕上的矩形，供 [searchRoute] 的起点用。
+/// 拿不到（还没布局）就返回 null，转场退化成屏幕中心缩放。
+Rect? rectOf(BuildContext context) {
+  final box = context.findRenderObject();
+  if (box is! RenderBox || !box.hasSize) return null;
+  return box.localToGlobal(Offset.zero) & box.size;
+}
+
+class _GrowFadeRoute<T> extends PageRoute<T> {
+  _GrowFadeRoute({required this.builder, this.origin});
+
+  final WidgetBuilder builder;
+  final Rect? origin;
+
+  @override
+  bool get opaque => true;
+
+  @override
+  Color? get barrierColor => null;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  bool get maintainState => true;
+
+  @override
+  Duration get transitionDuration => Motion.ms(260);
+
+  @override
+  Duration get reverseTransitionDuration => Motion.ms(160);
+
+  @override
+  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) => builder(context);
+
+  @override
+  Widget buildTransitions(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) {
+    final reduced = Motion.reduced(context);
+    final size = MediaQuery.sizeOf(context);
+    // 起点换算成 -1..1 的对齐坐标：Alignment(0,0) 是屏幕中心。
+    var ax = 0.0;
+    var ay = 0.0;
+    final o = origin;
+    if (o != null && size.width > 0 && size.height > 0) {
+      ax = ((o.center.dx / size.width) * 2 - 1).clamp(-1.0, 1.0);
+      ay = ((o.center.dy / size.height) * 2 - 1).clamp(-1.0, 1.0);
+    }
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final t = animation.value;
+        if (reduced) return child!;
+        double p;
+        if (animation.status == AnimationStatus.reverse) {
+          // 退场：已经决定了，系统快速回应
+          p = Motion.exit.transform(1 - t);
+        } else {
+          p = Motion.ease.transform(t);
+        }
+        final scale = .92 + .08 * (animation.status == AnimationStatus.reverse ? 1 - p : p);
+        final opacity = animation.status == AnimationStatus.reverse ? 1 - p : .2 + .8 * p;
+        return Opacity(
+          opacity: opacity.clamp(0.0, 1.0),
+          child: Transform.scale(scale: scale.clamp(.92, 1.0), alignment: Alignment(ax, ay), child: child),
+        );
+      },
+    );
+  }
+}
+
 /// 位移 + 透明度的页面转场。前进 320ms、返回 230ms（Android 85%）；
 /// 离场的一方 180ms 内淡出、只移动 0.4 倍距离。
 class ShiftFadeRoute<T> extends PageRoute<T> {
@@ -155,10 +237,10 @@ class _SheetRoute<T> extends PopupRoute<T> {
   bool get barrierDismissible => true;
 
   @override
-  Duration get transitionDuration => Motion.ms(340);
+  Duration get transitionDuration => Motion.ms(300);
 
   @override
-  Duration get reverseTransitionDuration => Motion.ms(220);
+  Duration get reverseTransitionDuration => Motion.ms(200);
 
   @override
   Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) => Material(
@@ -326,7 +408,10 @@ class _FadeSlideInState extends State<FadeSlideIn> with SingleTickerProviderStat
   }
 }
 
-/// [value] 变化时让子组件弹一下：0.8 → 1.1 → 1，260ms（追更图标）。
+/// [value] 变化时让子组件弹一下：0.86 → 1.06 → 1，200ms（追更图标）。
+///
+/// 只是确认「听见了」，不该抢戏：之前 260ms、过冲到 1.10，点一下像按了个
+/// 大按钮，手指已经松开了它还在动。
 class BounceOnChange extends StatefulWidget {
   const BounceOnChange({super.key, required this.value, required this.child});
 
@@ -340,15 +425,15 @@ class BounceOnChange extends StatefulWidget {
 class _BounceOnChangeState extends State<BounceOnChange> with SingleTickerProviderStateMixin {
   late final _c = AnimationController(vsync: this, value: 1);
   static final _scale = TweenSequence([
-    TweenSequenceItem(tween: Tween(begin: .8, end: 1.1).chain(CurveTween(curve: Motion.ease)), weight: 60),
-    TweenSequenceItem(tween: Tween(begin: 1.1, end: 1.0).chain(CurveTween(curve: Curves.easeOut)), weight: 40),
+    TweenSequenceItem(tween: Tween(begin: .86, end: 1.06).chain(CurveTween(curve: Motion.ease)), weight: 60),
+    TweenSequenceItem(tween: Tween(begin: 1.06, end: 1.0).chain(CurveTween(curve: Curves.easeOut)), weight: 40),
   ]);
 
   @override
   void didUpdateWidget(BounceOnChange old) {
     super.didUpdateWidget(old);
     if (old.value == widget.value) return;
-    final d = Motion.of(context, 260);
+    final d = Motion.of(context, 200);
     if (d == Duration.zero) return;
     _c
       ..duration = d

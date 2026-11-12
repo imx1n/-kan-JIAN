@@ -425,6 +425,8 @@ class ReaderPrefs extends ChangeNotifier {
     'mangaBrightness': 1.0,
     'proxy': AppConfig.defaultProxy,
     'shelfSort': 0,
+    // 书架顶层分区：0 漫画，1 轻小说。下次进来还停在同一个区。
+    'shelfSection': 0,
     'lastShelfSync': 0,
     'lastUpdateCheck': 0,
     // 每次启动自动检查更新；用户可以在「我的」里关掉。
@@ -558,6 +560,14 @@ class ReaderPrefs extends ChangeNotifier {
   /// 书架排序：0 最近阅读，1 更新时间。
   int get shelfSort => _get('shelfSort');
   set shelfSort(int v) => _set('shelfSort', v);
+
+  /// 书架顶层分区：0 漫画，1 轻小说。
+  ///
+  /// 和 [shelfSort] 不同，这两个区各有自己的筛选维度：漫画有「有更新 / 连载中 /
+  /// 已完结」，轻小说只有「全部 / 在读」。所以分区必须是独立的顶层状态，
+  /// 不能塞进筛选条里当第六个选项。
+  int get shelfSection => _get('shelfSection');
+  set shelfSection(int v) => _set('shelfSection', v.clamp(0, 1));
 
   int get lastShelfSync => _get('lastShelfSync');
   set lastShelfSync(int v) => _set('lastShelfSync', v);
