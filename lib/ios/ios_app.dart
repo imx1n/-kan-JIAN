@@ -168,25 +168,36 @@ class _IosShellState extends State<IosShell> {
                 child: _TabStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()]),
               ),
             ),
-            // 顶部渐进模糊：只覆盖状态栏那一条，往下正好在状态栏下沿断开。
+            // 滚动边缘模糊：上下两端都有，这是 iOS 26 的定义（内容与固定控件
+            // 之间的过渡，作用在滚动轴两端），见 [ScrollEdge]。
             //
-            // **底部没有全宽模糊带**。之前有一层铺到标签栏上方，结果白吃掉
-            // 一行内容——参考的界面里，标签栏胶囊之外的内容一直到屏幕底边
-            // 都是清楚的，被糊掉的那些是因为正好在胶囊玻璃下面。全宽渐隐
-            // 是多余的一层，标签栏自己的玻璃已经负责了那件事。
-            //
-            // 高度也不能往状态栏外多铺：大标题就在状态栏正下方（书架、发现、
-            // 我的），带子多高就压掉标题多高。参考图里正文从状态栏下沿开始
-            // 就是清晰的。
+            // 两端强度差一个量级，不是笔误：顶部压着状态栏，那条带子是内容
+            // 钻出系统栏的唯一过渡，要够浓；底部是悬浮胶囊，胶囊外侧的内容
+            // 本该清楚，所以只用一点点力度让它「浮起来」。上一版底部给了
+            // 124dp 全宽带，白吃掉一整行内容，反而突兀。
             Positioned(
               left: 0,
               right: 0,
               top: 0,
               child: EdgeBlur(
-                height: ScrollEdge.topCovered(context),
-                sigma: 12,
+                height: ScrollEdge.topHeight(context),
+                sigma: ScrollEdge.topSigma,
                 tint: IosColors.bg,
-                tintAlpha: .45,
+                tintAlpha: ScrollEdge.topTint,
+                reduce: GlassScope.reduced(context),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: Dock.inset(context),
+              child: EdgeBlur(
+                height: ScrollEdge.bottomHeight(context),
+                sigma: ScrollEdge.bottomSigma,
+                side: EdgeBlurSide.bottom,
+                tint: IosColors.bg,
+                tintAlpha: ScrollEdge.bottomTint,
+                reduce: GlassScope.reduced(context),
               ),
             ),
             _TabDock(index: index),
