@@ -289,16 +289,6 @@ class WenkuService extends ChangeNotifier {
     await _save();
   }
 
-  /// 检查登录是否还有效（会发一次请求）。
-  Future<bool> verify() async {
-    if (!loggedIn) return false;
-    try {
-      return looksLoggedIn(await _get('/modules/article/bookcase.php'));
-    } on ApiException {
-      rethrow;
-    }
-  }
-
   /* ─────────── 内容 ─────────── */
 
   /// 搜索。[byAuthor] 为 true 时按作者名搜。

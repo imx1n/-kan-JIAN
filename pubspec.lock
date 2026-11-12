@@ -89,14 +89,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.8"
-  cupertino_icons:
-    dependency: "direct main"
-    description:
-      name: cupertino_icons
-      sha256: "41e005c33bd814be4d3096aff55b1908d419fde52ca656c8c47719ec745873cd"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.9"
   cupertino_ui:
     dependency: transitive
     description:
@@ -803,7 +795,7 @@ packages:
     source: hosted
     version: "4.14.1"
   webview_flutter_android:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: webview_flutter_android
       sha256: "4de8b3d1ff4ebe1bdb42e68a5e4f809194a3cb0117a8f495f590004f00da3964"
@@ -819,7 +811,7 @@ packages:
     source: hosted
     version: "2.15.1"
   webview_flutter_wkwebview:
-    dependency: "direct main"
+    dependency: transitive
     description:
       name: webview_flutter_wkwebview
       sha256: acac45e0a8d7beb1d0805521f44842f406c46eb5a69410f53d935e3c62138afc

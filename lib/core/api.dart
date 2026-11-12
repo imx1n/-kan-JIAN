@@ -236,8 +236,6 @@ class MangaApi {
     }
   }
 
-  Future<Map<String, dynamic>> memberInfo(String token) => _get('/api/v3/member/info', const {}, token);
-
   /// 源站书架（漫画）。
   Future<PageResult<RemoteComic>> collectedComics(String token, {int offset = 0, int limit = 50}) async =>
       PageResult.parse(await _get('/api/v3/member/collect/comics', {'limit': limit, 'offset': offset}, token), RemoteComic.fromJson);
