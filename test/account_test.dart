@@ -152,6 +152,48 @@ void main() {
     expect(store.entry('k')!.reportedChapter, 'k1');
   });
 
+  test('限流（210 throttled）：按提示等待后自动重试，不报错', () async {
+    var calls = 0;
+    MangaApi.instance.adapter = _FakeAdapter((o, body) {
+      if (o.path.endsWith('/api/v3/comics')) {
+        calls++;
+        if (calls == 1) return (200, {'code': 210, 'message': 'Request was throttled. Expected available in 1 second.', 'results': null});
+        return (200, _page([_comic('a', 'A')]));
+      }
+      return (404, {});
+    });
+    final page = await MangaApi.instance.comics(limit: 1);
+    expect(page.list, hasLength(1));
+    expect(calls, 2);
+  });
+
+  test('限流等待时间：按消息里的秒数，非限流的 210 不等', () {
+    expect(throttleWait({'code': 210, 'message': 'Request was throttled. Expected available in 3 seconds.'}), const Duration(milliseconds: 3200));
+    expect(throttleWait({'code': 210, 'message': 'Request was throttled.'}), const Duration(milliseconds: 1200));
+    expect(throttleWait({'code': 210, 'message': 'Request was throttled. Expected available in 60 seconds.'}), const Duration(milliseconds: 5200));
+    expect(throttleWait({'code': 210, 'message': '請等待 1 小時自動解除'}), isNull);
+    expect(throttleWait({'code': 200, 'results': {}}), isNull);
+  });
+
+  test('阅读上报：延后期间翻到下一话，只报最新那一话', () async {
+    final saved = AccountService.reportDelay;
+    AccountService.reportDelay = const Duration(milliseconds: 100);
+    addTearDown(() => AccountService.reportDelay = saved);
+    final fake = _FakeAdapter((o, body) {
+      if (o.path.endsWith('/api/kb/web/login')) return (200, {'code': 200, 'results': {'token': 't', 'username': 'u'}});
+      if (o.path.contains('/chapter/')) return (200, {'code': 200, 'results': {'chapter': <String, Object?>{}}});
+      return (200, _page(const []));
+    });
+    MangaApi.instance.adapter = fake;
+    await AccountService.instance.login('u', 'p');
+    final first = AccountService.instance.reportRead('m', 'm1');
+    final second = AccountService.instance.reportRead('m', 'm2');
+    await Future.wait([first, second]);
+    final paths = fake.requests.map((r) => r.$1.path).where((p) => p.contains('/comic/m/chapter/')).toList();
+    expect(paths, hasLength(1));
+    expect(paths.single, endsWith('/chapter/m2'));
+  });
+
   test('详情页：浏览历史第一页里有这部作品，接上另一台设备的进度', () async {
     var history = <Object?>[];
     MangaApi.instance.adapter = _FakeAdapter((o, body) {

@@ -110,6 +110,10 @@ class AccountService extends ChangeNotifier {
   String? _failedKey;
   DateTime? _failedAt;
 
+  /// 读到一话后等这么久再上报：避开当前话和前后两话预载的请求高峰（源站会限流），
+  /// 期间翻到下一话就只报最新那一话。
+  static Duration reportDelay = const Duration(seconds: 2);
+
   /// 阅读器保存位置时调用：这一话还没上报过，就带凭证请求一次章节，让源站记进浏览历史，
   /// 另一台设备同步时就能接上。同一话只报一次；失败后 1 分钟内不重试。没登录时什么都不做。
   /// 只在真正读到这一话时调用（预载前后话不算），否则源站会以为已经读到下一话。
@@ -120,6 +124,9 @@ class AccountService extends ChangeNotifier {
     if (key == _reportedKey) return;
     if (key == _failedKey && _failedAt != null && DateTime.now().difference(_failedAt!) < const Duration(minutes: 1)) return;
     _reportedKey = key;
+    await Future<void>.delayed(reportDelay);
+    // 等待期间翻到了别的话，或者退出了登录：这一话不用报了。
+    if (_reportedKey != key || _token != token) return;
     try {
       await MangaApi.instance.reportRead(pathWord, uuid, token);
       LibraryStore.instance.markReported(pathWord, uuid);

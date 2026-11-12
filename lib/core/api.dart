@@ -53,6 +53,18 @@ class ApiDiagnosis {
   final DateTime at;
 }
 
+/// 源站限流时该等多久：code 210 且消息含 throttled（例如「Request was throttled. Expected
+/// available in 1 second.」），按消息里的秒数等，限制在 1–5 秒，再多留 200 毫秒余量。
+/// 不是限流（包括登录风控那种 210）返回 null。
+@visibleForTesting
+Duration? throttleWait(Object? body) {
+  if (body is! Map || body['code'] != 210) return null;
+  final message = '${body['message'] ?? body['detail'] ?? ''}';
+  if (!message.toLowerCase().contains('throttl')) return null;
+  final seconds = int.tryParse(RegExp(r'(\d+)\s*second').firstMatch(message)?.group(1) ?? '') ?? 1;
+  return Duration(milliseconds: seconds.clamp(1, 5) * 1000 + 200);
+}
+
 class MangaApi {
   MangaApi._();
 
@@ -97,8 +109,17 @@ class MangaApi {
       final sw = Stopwatch()..start();
       lastHost = host;
       try {
-        final res = await _dio.get<Object>('$host$path', queryParameters: params, options: options);
-        final body = res.data is String ? jsonDecode(res.data as String) : res.data;
+        var res = await _dio.get<Object>('$host$path', queryParameters: params, options: options);
+        var body = res.data is String ? jsonDecode(res.data as String) : res.data;
+        // 源站限流（210 throttled）：按提示等一会儿再请求同一台，最多 3 次。换线路也一样被限，
+        // 这类失败不算主机的问题。翻话时当前话、前后两话预载和阅读上报挤在一起最容易撞上。
+        for (var i = 0; i < 3; i++) {
+          final wait = throttleWait(body);
+          if (wait == null) break;
+          await Future<void>.delayed(wait);
+          res = await _dio.get<Object>('$host$path', queryParameters: params, options: options);
+          body = res.data is String ? jsonDecode(res.data as String) : res.data;
+        }
         if (body is Map && body['results'] is Map) {
           selector.reportSuccess(host, sw.elapsedMilliseconds);
           if (lastError.value != null) lastError.value = null;
