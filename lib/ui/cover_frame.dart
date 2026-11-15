@@ -86,6 +86,31 @@ class _FramePainter extends CustomPainter {
   final bool plain;
   final double radius;
 
+  // ── 着色器缓存 ───────────────────────────────────────────────────────────
+  //
+  // 这四层全是渐变 / 平铺。`ui.Gradient.*` 和 `ui.ImageShader` 每次调用都
+  // 分配一个原生对象，以前是每帧每个封面各建四个、从不释放，靠 GC 慢慢收。
+  // 三列网格一屏六到九个封面，滚动时就是每帧几十次分配。
+  //
+  // 渐变只跟封面尺寸走（尺寸就那么几档），所以按尺寸缓存；纸纹只跟
+  // [small] 走。缓存不设上限也没事——档位数由布局决定，几十个封顶。
+  static final _spineCache = <String, ui.Shader>{};
+  static final _sheenCache = <String, ui.Shader>{};
+  static final _grainCache = <bool, ui.ImageShader>{};
+  static ui.Shader? _vignetteShader;
+
+  /// 暗角：椭圆 122% × 94%、圆心在 50% / 38%，从 56% 处开始压暗到 11%。
+  ///
+  /// 它是唯一不依赖尺寸的一层——坐标在 [Canvas] 的变换里，shader 本身永远是
+  /// 单位圆，所以全进程一份就够。
+  static ui.Shader _vignetteUnit() =>
+      _vignetteShader ??= ui.Gradient.radial(
+        Offset.zero,
+        1,
+        [const Color(0x00000000), const Color(0xFF000000).withValues(alpha: .11)],
+        [.56, 1],
+      );
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
@@ -102,35 +127,35 @@ class _FramePainter extends CustomPainter {
   /// 书脊：左边缘一条「白高光 → 深折痕 → 渐淡」的横向渐变。
   void _spine(Canvas canvas, double w, double h) {
     const clear = Color(0xFFFFFFFF);
-    final stops = small
-        ? <double>[0, .6 / w, 1.2 / w, 2.2 / w, .22]
-        : <double>[0, .7 / w, 1.5 / w, 3 / w, 6 / w, .16];
-    final colors = small
-        ? <Color>[
-            clear.withValues(alpha: 0),
-            clear.withValues(alpha: .10),
-            const Color(0xFF000000).withValues(alpha: .26),
-            const Color(0xFF000000).withValues(alpha: .10),
-            const Color(0xFF000000).withValues(alpha: 0),
-          ]
-        : <Color>[
-            clear.withValues(alpha: 0),
-            clear.withValues(alpha: .10),
-            const Color(0xFF000000).withValues(alpha: .30),
-            const Color(0xFF000000).withValues(alpha: .14),
-            const Color(0xFF000000).withValues(alpha: .045),
-            const Color(0xFF000000).withValues(alpha: 0),
-          ];
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, w, h),
-      Paint()
-        ..shader = ui.Gradient.linear(
-          Offset.zero,
-          Offset(w, 0),
-          colors,
-          [for (final s in stops) s.clamp(0.0, 1.0)],
-        ),
-    );
+    final key = '${small ? 's' : 'l'}:${w.toStringAsFixed(2)}x${h.toStringAsFixed(2)}';
+    final shader = _spineCache[key] ??= () {
+      final stops = small
+          ? <double>[0, .6 / w, 1.2 / w, 2.2 / w, .22]
+          : <double>[0, .7 / w, 1.5 / w, 3 / w, 6 / w, .16];
+      final colors = small
+          ? <Color>[
+              clear.withValues(alpha: 0),
+              clear.withValues(alpha: .10),
+              const Color(0xFF000000).withValues(alpha: .26),
+              const Color(0xFF000000).withValues(alpha: .10),
+              const Color(0xFF000000).withValues(alpha: 0),
+            ]
+          : <Color>[
+              clear.withValues(alpha: 0),
+              clear.withValues(alpha: .10),
+              const Color(0xFF000000).withValues(alpha: .30),
+              const Color(0xFF000000).withValues(alpha: .14),
+              const Color(0xFF000000).withValues(alpha: .045),
+              const Color(0xFF000000).withValues(alpha: 0),
+            ];
+      return ui.Gradient.linear(
+        Offset.zero,
+        Offset(w, 0),
+        colors,
+        [for (final s in stops) s.clamp(0.0, 1.0)],
+      );
+    }();
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..shader = shader);
   }
 
   /// 暗角：椭圆 122% × 94%、圆心在 50% / 38%，从 56% 处开始压暗到 11%。
@@ -138,16 +163,7 @@ class _FramePainter extends CustomPainter {
     canvas.save();
     canvas.translate(w * .5, h * .38);
     canvas.scale(w * 1.22, h * .94);
-    canvas.drawRect(
-      const Rect.fromLTWH(-1, -1, 2, 2),
-      Paint()
-        ..shader = ui.Gradient.radial(
-          Offset.zero,
-          1,
-          [const Color(0x00000000), const Color(0xFF000000).withValues(alpha: .11)],
-          [.56, 1],
-        ),
-    );
+    canvas.drawRect(const Rect.fromLTWH(-1, -1, 2, 2), Paint()..shader = _vignetteUnit());
     canvas.restore();
   }
 
@@ -155,23 +171,23 @@ class _FramePainter extends CustomPainter {
   void _sheen(Canvas canvas, double w, double h) {
     const dx = .52992; // sin 148°
     const dy = .84805; // -cos 148°
-    final len = w * dx + h * dy;
-    final mid = Offset(w / 2, h / 2);
-    const white = Color(0xFFFFFFFF);
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, w, h),
-      Paint()
-        ..shader = ui.Gradient.linear(
-          mid - Offset(dx, dy) * (len / 2),
-          mid + Offset(dx, dy) * (len / 2),
-          [
-            white.withValues(alpha: .17),
-            white.withValues(alpha: .04),
-            white.withValues(alpha: 0),
-          ],
-          [0, .17, .34],
-        ),
-    );
+    final key = '${w.toStringAsFixed(2)}x${h.toStringAsFixed(2)}';
+    final shader = _sheenCache[key] ??= () {
+      final len = w * dx + h * dy;
+      final mid = Offset(w / 2, h / 2);
+      const white = Color(0xFFFFFFFF);
+      return ui.Gradient.linear(
+        mid - Offset(dx, dy) * (len / 2),
+        mid + Offset(dx, dy) * (len / 2),
+        [
+          white.withValues(alpha: .17),
+          white.withValues(alpha: .04),
+          white.withValues(alpha: 0),
+        ],
+        [0, .17, .34],
+      );
+    }();
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..shader = shader);
   }
 
   /// 纸纹：一张固定种子的 140×140 颗粒图平铺。
@@ -181,14 +197,14 @@ class _FramePainter extends CustomPainter {
   /// 正好是「一个物理像素一个噪点」——再密就会细过像素、和屏幕栅格
   /// 打出摩尔纹，看起来像电视雪花而不是纸。
   void _grain(Canvas canvas, Size size) {
-    final n = _grainSize.toDouble();
-    final tile = small ? 64.0 : 140.0;
-    final k = tile / n;
-    final m = Float64List.fromList(<double>[k, 0, 0, 0, 0, k, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..shader = ui.ImageShader(_grainImage(), TileMode.repeated, TileMode.repeated, m),
-    );
+    final shader = _grainCache[small] ??= () {
+      const n = _grainSize;
+      final tile = small ? 64.0 : 140.0;
+      final k = tile / n;
+      final m = Float64List.fromList(<double>[k, 0, 0, 0, 0, k, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      return ui.ImageShader(_grainImage(), TileMode.repeated, TileMode.repeated, m);
+    }();
+    canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
   }
 
   /// 内描边：外一道 1.4px 的黑、里一道 .6px 的白，让封面像压在纸面上。
@@ -212,5 +228,5 @@ class _FramePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_FramePainter old) => old.small != small || old.plain != plain;
+  bool shouldRepaint(_FramePainter old) => old.small != small || old.plain != plain || old.radius != radius;
 }

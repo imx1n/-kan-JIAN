@@ -177,6 +177,18 @@ void main() {
     expect(ReaderPrefs.instance.mangaMode, 4);
   });
 
+  // 版本号是 PackageInfo → UpdateService.currentVersion() 读回来的，这条链路
+  // 以前没有断言：mock 的 version 字段换了、或者版本号渲染位置挪了，测试也不会红。
+  // 单独一条用例，因为返回钮是自绘的 GlassButton，没法在同一个页面树里回来。
+  uiTest('我的：关于里的版本号', (tester) async {
+    await pump(tester, const IosMinePage());
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('关于 栞间'));
+    await tester.pumpAndSettle();
+    expect(find.text('关于 栞间'), findsOneWidget);
+    expect(find.textContaining('当前 v0.3.0'), findsOneWidget);
+  });
+
   uiTest('账号同步：未登录显示登录表单，填好账号密码才能登录', (tester) async {
     await pump(tester, const IosAccountPage());
     expect(find.text('拷贝漫画账号'), findsOneWidget);
