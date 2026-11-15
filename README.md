@@ -3,7 +3,7 @@
     <img src="docs/images/icon.png" alt="栞间" width="108" height="108">
   </a>
   <h2 align="center">栞间</h2>
-  <p>漫画与轻小说的第三方阅读器，单色界面，Android / iOS</p>
+  <p>拷贝漫画与轻小说文库的第三方阅读器，Android / iOS</p>
 </div>
 
 <p align="center">
