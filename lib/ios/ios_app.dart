@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -190,7 +191,10 @@ class _IosShellState extends State<IosShell> {
             Positioned(
               left: 0,
               right: 0,
-              bottom: Dock.inset(context),
+              // 锚在屏幕底边，不是手势区上沿。抬到 `Dock.inset` 的话手势区
+              // 那一条就留在带子外面，内容滚到底时会在底栏下方露出来。
+              // 高度里已经包含这段安全区，见 [ScrollEdge.bottomHeight]。
+              bottom: 0,
               child: EdgeBlur(
                 height: ScrollEdge.bottomHeight(context),
                 sigma: ScrollEdge.bottomSigma,
@@ -303,7 +307,20 @@ class _TabStackState extends State<_TabStack> {
       }
       // 标签栏的选中框跟着页面连续移动（原生就是这样，不是翻完才跳一格）。
       final p = _pages.hasClients ? _pages.page : null;
-      if (p != null && IosShell.pagePos.value != p) IosShell.pagePos.value = p;
+      if (p == null || IosShell.pagePos.value == p) return false;
+      // 构建期不能直接写：切页时 [didUpdateWidget] 会跳页，跳页会派发滚动通知，
+      // 通知落在这里时框架还在 build —— 直接赋值就是 markNeedsBuild during build，
+      // 调试期会抛异常，而且这条异常会占掉「本帧第一条错误」的位置，把后面
+      // 真正的布局溢出诊断压成一行摘要。构建期推到帧尾再写。
+      if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_pages.hasClients) return;
+          final q = _pages.page;
+          if (q != null && IosShell.pagePos.value != q) IosShell.pagePos.value = q;
+        });
+      } else {
+        IosShell.pagePos.value = p;
+      }
       return false;
     },
     child: PageView(

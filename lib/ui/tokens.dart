@@ -14,8 +14,8 @@ class Space {
   static const x3 = 12.0;
   static const x4 = 16.0;
   static const x5 = 20.0;
-  static const x6 = 28.0;
-  static const x7 = 36.0;
+  static const x6 = 24.0;
+  static const x7 = 32.0;
 
   /// 全 App 唯一的页面左右外边距。标题、筛选、列表、网格左边缘都落在这一条线。
   static const page = x5;
@@ -24,7 +24,14 @@ class Space {
   static const afterTitle = x2;
 
   /// 区块标题的上沿留白（上一个区块的内容到此结束）。
-  static const beforeSection = x6;
+  ///
+  /// 这一档只在「上一块内容已经贴着字面收尾」时才代表视觉间距——前面那块的
+  /// 盒内空余会叠在它上面。所以筛选行、横排卡片都改成内容多高就多高，
+  /// 区块之间的空白只有一个来源。
+  ///
+  /// 早先写 28，实测「今日更新」前面 39dp、「人气排行」前面 36dp：两个区块
+  /// 标题呼吸不一样，前者还空得能停车。16 + 标题行框自身的 leading 落在 20 上下。
+  static const beforeSection = x4;
 
   /// 区块标题下沿到内容。
   static const afterSection = x3;
@@ -78,11 +85,16 @@ class ScrollEdge {
   /// 换的。带子内部由 [EdgeBlur] 自己从边缘渐到清楚。
   static double topHeight(BuildContext context) => MediaQuery.paddingOf(context).top;
 
-  /// 底部带高：胶囊上沿再往上 20。
+  /// 底部带高：从**屏幕底边**一直铺到胶囊上沿再往上 12。
   ///
-  /// 只盖住胶囊自身高度 + 一点点过渡，不像顶部那样按安全区算。胶囊是浮在
-  /// 内容上的，它下面是手势条，没有「内容从系统栏下面钻出来」的问题。
-  static double bottomHeight(BuildContext context) => Dock.height + 20;
+  /// 早先这个值只算了胶囊自身高度 + 20，带子在布局里又是抬到手势区之上
+  /// （`bottom: inset`）放的——两件事一叠加，手势区那一条（约 16dp）压根没有
+  /// 模糊也没有染色，滚动内容滚到那里就直接露在系统栏下面，看起来像底栏
+  /// 下面空了一截。
+  ///
+  /// 现在带子的下沿锚在屏幕底边，高度把「手势区 + 胶囊间距 + 胶囊 + 上探」
+  /// 全算进来，底栏外沿和系统手势区是同一层过渡。
+  static double bottomHeight(BuildContext context) => Dock.bottom(context) + Dock.height + Space.x3;
 
   /// 顶部模糊强度。状态栏那一条是唯一的过渡，要浓。
   static const topSigma = 12.0;
