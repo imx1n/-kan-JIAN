@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
-import 'icons.dart';
 import 'novel_pages.dart';
 
 /// 小说正文：左右分页（默认）或整章上下滚动。
@@ -320,36 +319,6 @@ class NovelChapterHeader extends StatelessWidget {
             const SizedBox(height: 6),
             Text(title, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: ink)),
           ],
-        ),
-      );
-}
-
-/// 上下滚动 / 左右翻页切换：放在工具条上，和读书软件的常规位置一致。
-class NovelModeToggle extends StatelessWidget {
-  const NovelModeToggle({super.key, required this.paged, required this.color, required this.onChanged});
-
-  final bool paged;
-  final Color color;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-        button: true,
-        label: paged ? '切换为上下滚动' : '切换为左右翻页',
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => onChanged(!paged),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppIcon(paged ? 'scroll' : 'pages', size: 17, color: color, stroke: 1.7),
-                const SizedBox(width: 6),
-                Text(paged ? '翻页' : '滚动', style: TextStyle(fontSize: 13, color: color)),
-              ],
-            ),
-          ),
         ),
       );
 }

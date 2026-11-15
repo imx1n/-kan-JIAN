@@ -7,6 +7,7 @@ import '../core/config.dart';
 import '../core/routes.dart';
 import '../core/store.dart';
 import '../ui/icons.dart';
+import 'ios_mine.dart' show iosEditProxy;
 import 'ios_settings.dart' show SettingsPage;
 import 'ios_theme.dart';
 
@@ -170,6 +171,18 @@ class _IosSourcePageState extends State<IosSourcePage> {
                 ),
             ],
           ),
+      InsetGroup(
+        title: '网络',
+        footer: '跟随系统时，系统 VPN 类代理会自动生效；需要 HTTP 代理时再填 host:port。',
+        children: [
+          IosRow(
+            icon: 'route',
+            title: '网络代理',
+            value: _prefs.proxy.isEmpty ? '跟随系统' : _prefs.proxy,
+            onTap: () => iosEditProxy(context),
+          ),
+        ],
+      ),
       InsetGroup(
         title: '关于线路',
         footer: '线路由源站提供，应用不内置任何代理。若全部线路都不可用，可在上方填写自建的中转地址。',

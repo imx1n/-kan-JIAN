@@ -1,5 +1,5 @@
 import 'dart:io' show Platform;
-import 'dart:ui' show ImageFilter;
+import 'dart:ui' show FontFeature, ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -202,16 +202,23 @@ class Glass extends StatelessWidget {
       shape: LiquidRoundedSuperellipse(borderRadius: radius),
       // 这组数值是给 premium 档调的：premium 直接用原值（只有 standard 档会做归一化
       // 把 thickness 乘 0.4、lightIntensity 乘 0.6），所以光和色散要按 3D 着色的量级给。
-      // 之前那组 .5 / .01 是按 2D 档试的，放到 premium 下折射几乎看不出来。
+      //
+      // 2026-11 这一轮整体加强折射与透明：
+      // - thickness 26 → 44：玻璃越厚弯折越强，边缘的"厚透镜"感才出来
+      // - refractiveIndex 1.2 → 1.45：折射偏移更明显（1.0 是完全不弯折）
+      // - chromaticAberration .12 → .34：色散翻倍，边缘开始有彩虹分离
+      // - glassColor 不透明度 0x38/0x40 → 0x1A/0x22：染色更淡，背景透出更多
+      // - lightIntensity 1.5 → 1.9：高光更亮，和更透的底子配
+      // 注意 blur 保持中等偏低：糊太狠会把折射的位移藏掉，看起来就只是毛玻璃。
       settings: LiquidGlassSettings(
-        blur: 10,
-        thickness: 26,
+        blur: 7,
+        thickness: 44,
         // 深色下用暗色染色，浅色下用极淡的白色，保留折射的同时压住背景杂色。
-        glassColor: dark ? const Color(0x38292A31) : const Color(0x40F8F8FB),
-        lightIntensity: 1.5,
-        refractiveIndex: 1.2,
-        chromaticAberration: .12,
-        saturation: 1.5,
+        glassColor: dark ? const Color(0x1A292A31) : const Color(0x22F8F8FB),
+        lightIntensity: 1.9,
+        refractiveIndex: 1.45,
+        chromaticAberration: .34,
+        saturation: 1.6,
         shadowElevation: shadow ? 1.0 : 0.0,
       ),
       child: content,
@@ -389,20 +396,38 @@ class IosSegmented extends StatelessWidget {
                         onTap: () {
                           if (i != selected) onChanged(i);
                         },
+                        // 文字和计数作为一组居中。以前计数是拼在同一个 TextSpan 里的
+                        // 两个空格，字距由空格宽度决定（14 号字量出来接近 9dp），
+                        // 在几百分段里有的松有的紧；现在固定 4dp，整组一起居中，
+                        // 标签长度不同也不会让数字飘。
                         child: Center(
-                          child: Text.rich(
-                            TextSpan(children: [
-                              TextSpan(text: options[i]),
-                              if (counts != null && i < counts!.length && counts![i] != null)
-                                TextSpan(text: '  ${counts![i]}', style: TextStyle(fontWeight: FontWeight.w400, color: IosColors.muted)),
-                            ]),
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: compact ? 13 : 14,
-                              fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
-                              color: i == selected ? IosColors.ink : IosColors.muted,
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text(
+                              options[i],
+                              maxLines: 1,
+                              softWrap: false,
+                              style: TextStyle(
+                                fontSize: compact ? 13 : 14,
+                                fontWeight: i == selected ? FontWeight.w600 : FontWeight.w400,
+                                color: i == selected ? IosColors.ink : IosColors.muted,
+                              ),
                             ),
-                          ),
+                            if (counts != null && i < counts!.length && counts![i] != null) ...[
+                              SizedBox(width: compact ? 3 : 4),
+                              Text(
+                                '${counts![i]}',
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: compact ? 13 : 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: IosColors.muted,
+                                  // 等宽数字：切分段时计数不会因为 1 / 11 的宽度差抖动。
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ]),
                         ),
                       ),
                     ),
@@ -526,61 +551,173 @@ class UnderlineTabs extends StatelessWidget {
 }
 
 /// 横向文字筛选：选中项为浅灰胶囊。
+///
+/// 间距是一套数：胶囊内边距 [_pad]、胶囊之间 [_gap]。两个数的和决定相邻
+/// 文字的距离（[_pad] × 2 + [_gap] = 24dp），所以不管哪一项、字多宽，
+/// 相邻标签之间看起来都是同一条缝。原来的 13 + 8 + 13 = 34dp 太松，
+/// 一排五个标签要横着拉出半屏。
+///
+/// 行高就是胶囊高度，不留盒内空余。
+///
+/// 之前行高 44、胶囊 34，上下各空 5dp。那 5dp 会叠到下一个区块标题的上留白
+/// 上，「今日更新」前面的空白就比「人气排行」前面多一截——同一屏两个区块
+/// 标题呼吸不一样。现在行高贴合内容，区块间距只由 [Space.beforeSection] 决定。
+///
+/// 胶囊与上下邻居的距离由 [above] / [below] 管，且**只有一个来源**。
+///
+/// 设计稿（062）量得很死：分段控件底边到胶囊上沿 9dp，胶囊下沿到续读卡上沿
+/// 也是 9dp，两边一样。真机上早先是「上 4 / 下 12」——这两个数分别写在
+/// 分段控件的 sliver padding 和续读卡的 padding 里，两边各管一头，谁也不知道
+/// 对方是多少，于是胶囊上面贴着控件、下面空出一条。现在上下都归这一行自己
+/// 写，调用方不许再在外面套垂直 padding，结构上就不可能写出不对称。
 class TextChips extends StatelessWidget {
   const TextChips({super.key, required this.items, required this.selected, required this.onSelect});
+
+  static const _pad = 10.0;
+  static const _gap = 4.0;
+
+  /// 胶囊自己的高度，也是整行的高度。
+  ///
+  /// 34 是 15pt 字在 1.0 倍下的取值。不写死是因为它同时充当容器高度和行框
+  /// 高度：字号放大到 1.3 倍后行框要 44，容器还钉在 34，`SizedBox` 一裁，
+  /// 字上下就各少一截。所以实际高度由 [pillHeight] 按缩放算，34 只是下限。
+  static const _pill = 34.0;
+
+  /// 胶囊实际高度：跟随系统字号，最少 [_pill]。
+  ///
+  /// 1.6 是「34 / 15 再留一点」，让 leading 对半分之后文字上下各有约 2dp 余量。
+  static double pillHeight(BuildContext context) {
+    final scaled = MediaQuery.textScalerOf(context).scale(15) * 1.6;
+    return scaled > _pill ? scaled : _pill;
+  }
+
+  /// 胶囊上沿与上一块、下沿与下一块的空隙。两边同值，见类注释。
+  static const above = Space.x2;
+  static const below = Space.x2;
 
   /// (标签, 计数, 是否带更新圆点)
   final List<(String, int?, bool)> items;
   final int selected;
   final ValueChanged<int> onSelect;
 
+  /// 可点区域的最小高度。34 的胶囊在视觉上没问题，但手指点上下边缘容易落空，
+  /// 44 是两端（iOS / Material）都认的最小可点尺寸。
+  static const _hit = 44.0;
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-        height: 44,
-        child: ListView.separated(
+  Widget build(BuildContext context) {
+    final pill = pillHeight(context);
+    // 行高至少 [_hit]，胶囊在行内居中。多出来的高度从上下留白里扣掉，
+    // 所以「胶囊下沿到下一块」的视觉间距仍然是 [below]，总占用不变。
+    final row = pill > _hit ? pill : _hit;
+    final inset = (row - pill) / 2;
+    final padTop = above - inset > 0 ? above - inset : 0.0;
+    final padBottom = below - inset > 0 ? below - inset : 0.0;
+    return Padding(
+      padding: EdgeInsets.only(top: padTop, bottom: padBottom),
+      child: SizedBox(
+        height: row,
+        child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          // 首尾用 [Space.page]，和标题、列表、网格落在同一条左边缘线，
-          // 也保证划到尽头时最后一个胶囊距右边同样是 page。
           padding: const EdgeInsets.symmetric(horizontal: Space.page),
-          itemCount: items.length,
-          separatorBuilder: (_, _) => const SizedBox(width: Space.x2),
-          itemBuilder: (context, i) {
-            final (label, count, dot) = items[i];
-            final on = i == selected;
-            return Pressable(
-              haptic: true,
-              onTap: () => onSelect(i),
-              child: AnimatedContainer(
-                duration: Motion.of(context, 180),
-                curve: Motion.ease,
-                // 胶囊左右各多 1px，页面有 4 的负向修正时也不会看起来偏。
-                padding: const EdgeInsets.symmetric(horizontal: 13),
-                // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。
-                decoration: BoxDecoration(color: on ? IosColors.faint : Colors.transparent, borderRadius: BorderRadius.circular(18)),
-                child: Center(
-                  widthFactor: 1,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (dot) ...[
-                      Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.ink, shape: BoxShape.circle)),
-                      const SizedBox(width: 6),
-                    ],
-                    Text(label, style: TextStyle(fontSize: 15, color: on ? IosColors.ink : IosColors.muted, fontWeight: on ? FontWeight.w600 : FontWeight.w400)),
-                    if (count != null) ...[
-                      const SizedBox(width: 5),
-                      Text('$count', style: TextStyle(fontSize: 13, color: on ? IosColors.ink : IosColors.muted)),
-                    ],
-                  ]),
-                ),
-              ),
-            );
-          },
+          // 左起排列，第一颗胶囊的背景左沿落在 [Space.page] 上，和区块标题、
+          // 搜索框、网格同一条线。
+          //
+          // 早先写的是「放得下就整行居中」：三项筛选撑不满一行时右边空一大片，
+          // 居中看着平衡。但 062 / 069 / 071 三份稿里这一行都是从页边距起排的
+          // ——071 只有「全部 / 在读」两颗，稿上贴着左边，居中会让整行右移半屏，
+          // 左侧空出一条，和标题左沿对不齐。
+          //
+          // 左右留白就是 [Space.page]，不减去胶囊自己的 [_pad]。早先写的是
+          // Space.page - _pad，想让**文字**从 20dp 起，可胶囊还有一圈 [_pad] 的
+          // 背景，于是背景左沿落到 10dp，比搜索框、区块标题都往左探出 10dp，
+          // 肉眼能看出没对齐。要对齐的是胶囊背景沿，所以留白原样给满。
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                if (i > 0) const SizedBox(width: _gap),
+                _chip(context, i, pill, row),
+              ],
+            ],
+          ),
         ),
-      );
+      ),
+    );
+  }
+
+  Widget _chip(BuildContext context, int i, double pill, double row) {
+    final (label, count, dot) = items[i];
+    final on = i == selected;
+    // 行框要按**缩放后**的字号折算，不能按 15 写死：行框 = height × 实际字号，
+    // 1.3 倍下 34 / 15 × 19.5 = 44.2，比胶囊高出 10dp，字就被容器裁掉上下两截。
+    final s = MediaQuery.textScalerOf(context);
+    final inset = (row - pill) / 2;
+    return Center(
+      heightFactor: 1,
+      child: Pressable(
+        haptic: true,
+        onTap: () => onSelect(i),
+        // 上下补到行高再进 Pressable：胶囊还是 34 的视觉，手指落点有 44。
+        // 补在 Pressable 里面而不是外面，是因为它 shrink-wrap 子节点。
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: inset > 0 ? inset : 0),
+          child: AnimatedContainer(
+            duration: Motion.of(context, 180),
+            curve: Motion.ease,
+            height: pill,
+            padding: const EdgeInsets.symmetric(horizontal: _pad),
+            // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。
+            decoration: BoxDecoration(color: on ? IosColors.faint : Colors.transparent, borderRadius: BorderRadius.circular(pill / 2)),
+            child: Center(
+              widthFactor: 1,
+              child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+                if (dot) ...[
+                  Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.ink, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                ],
+                // 行框直接撑满胶囊高度、leading 上下平分。
+                //
+                // 不这么写的话，字在胶囊里看着偏上/偏下：CJK 字体的 ascent 远大于
+                // descent，Flutter 默认把多出来的 leading 按比例分摊（proportional），
+                // 墨迹就被推离几何中心，而且各家 ROM 的字体推的方向和幅度都不一样。
+                // 把 line box 固定成胶囊高度、leading 对半分之后，墨迹的光学中心
+                // 与胶囊中心重合，换字体、换字号都不会变。
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: pill / s.scale(15),
+                    leadingDistribution: TextLeadingDistribution.even,
+                    color: on ? IosColors.ink : IosColors.muted,
+                    fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+                if (count != null) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    '$count',
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: pill / s.scale(13),
+                      leadingDistribution: TextLeadingDistribution.even,
+                      color: on ? IosColors.ink : IosColors.muted,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// 区块标题：21pt 粗体 + 计数 + 右侧文字按钮。
 class IosSection extends StatelessWidget {
-  const IosSection(this.title, {super.key, this.count, this.action, this.onAction, this.actionIcon = 'right', this.note});
+  const IosSection(this.title, {super.key, this.count, this.action, this.onAction, this.actionIcon = 'right', this.note, this.top});
 
   final String title;
   final String? count;
@@ -589,11 +726,39 @@ class IosSection extends StatelessWidget {
   final String actionIcon;
   final String? note;
 
+  /// 覆盖默认的上留白。紧跟 [TextChips] 的行传 `0`——胶囊那一行自己已经出了
+  /// 下沿空隙，标题再补一次就叠成两倍。除 `0` 以外的值不会有「紧跟胶囊」的
+  /// 语义，只会按普通区块处理。
+  final double? top;
+
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(Space.page, Space.beforeSection, Space.page - 4, Space.afterSection),
+  Widget build(BuildContext context) {
+    // 标题在行内的纵向位置必须是常数。
+    //
+    // 以前这一行是自然高度：带「更多」按钮时按钮的 10dp 垂直内边距把行撑到
+    // 38，标题居中后就往下沉 6–8dp，于是「今日更新」前面的空白比「人气排行」
+    // 多一截——同一屏两个区块标题的间距不一样。现在行高固定成
+    // 「标题行框 + 上下各 4」，标题永远在行顶往下 4dp，两侧按钮只影响行宽。
+    final scaler = MediaQuery.textScalerOf(context);
+    final titleHeight = scaler.scale(21) * 1.2;
+    // 紧跟胶囊时不再补行内上下 4，行高也不再留 1.2 倍行距。
+    //
+    // 那 4dp 是为了让行高 = 标题行框 + 8，两侧文字按钮才有地方放、标题也不会
+    // 沉下去。但这一行上面是 [TextChips]，它已经出了 [below] 8；再叠 4，胶囊
+    // 下沿到标题墨迹就变成 8 + 4 + 行内 leading ≈ 16，是上方 8 的两倍。
+    // 行距同理：21pt × 1.2 多出来的 4.2 有一半落在字顶上方，收成 1.0 才只剩
+    // 字形自身的墨迹内缩（约 1.7）。
+    final tight = (top ?? Space.beforeSection) == 0;
+    final inset = tight ? 0.0 : 4.0;
+    // 行框也要跟着收：高度还按 1.2 倍算的话，21pt 的字在自己 21 的行框里被
+    // 居中进 25.2 的盒子，又多出 2.1 的顶隙——实测 11.8 就是这么来的。
+    final rowHeight = tight ? scaler.scale(21) : titleHeight + inset * 2;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Space.page, top ?? Space.beforeSection, Space.page - 4, Space.afterSection),
+      child: SizedBox(
+        height: rowHeight,
         child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          Text(title, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
+          Text(title, style: TextStyle(fontSize: 21, height: tight ? 1.0 : 1.2, fontWeight: FontWeight.w700, color: IosColors.ink)),
           if (count != null) ...[
             const SizedBox(width: Space.x2),
             Text(count!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
@@ -604,7 +769,11 @@ class IosSection extends StatelessWidget {
             Pressable(
               onTap: onAction,
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                // 垂直内边距压到 4：再大就会把行高顶开（上面说明了后果）。
+                // tight 时行高正好等于 15pt 的行框（缩放后的 21），一分余量都
+                // 没有——再留 4dp 上下内边距，这行文字会被 Row 的紧约束压成
+                // 13dp 高的盒子，真机上「更多」两个字上下各切掉一截。
+                padding: EdgeInsets.symmetric(vertical: inset, horizontal: 4),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(action!, style: TextStyle(fontSize: 15, color: IosColors.muted)),
                   const SizedBox(width: 2),
@@ -613,10 +782,18 @@ class IosSection extends StatelessWidget {
               ),
             ),
         ]),
-      );
+      ),
+    );
+  }
 }
 
 /// 圆角分组列表（设置页）。
+///
+/// 分组之间的间距由分组自己负责，调用方不再手工塞 SizedBox：有标题时
+/// 标题的 [Space.beforeSection] 就是这段间距；没有标题时（「退出登录」
+/// 这种单个动作）由分组自己在顶上补同样的一段。上一版完全交给调用方，
+/// 「我的」页上「数据管理」和「关于 栞间」两块卡片直接贴在一起，
+/// 中间一个像素都没有。
 class InsetGroup extends StatelessWidget {
   const InsetGroup({super.key, this.title, required this.children, this.footer});
 
@@ -632,7 +809,9 @@ class InsetGroup extends StatelessWidget {
             // 的做法——那会让「偏好设置」和下面每一行都对不上。
             padding: const EdgeInsets.fromLTRB(Space.page + Space.x4, Space.beforeSection, Space.page, Space.x2),
             child: Text(title!, style: TextStyle(fontSize: 13, color: IosColors.muted)),
-          ),
+          )
+        else
+          const SizedBox(height: Space.beforeSection),
         Container(
           margin: const EdgeInsets.symmetric(horizontal: Space.page),
           decoration: BoxDecoration(color: IosColors.surface, borderRadius: BorderRadius.circular(18)),

@@ -9,7 +9,7 @@ import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart' show Dock, Space;
-import '../ui/widgets.dart' show CoverImage, Pager, coverHeightFor, kCoverAspect, onScrollEnd;
+import '../ui/widgets.dart' show CoverCaption, CoverImage, Pager, coverHeightFor, kCoverAspect, onScrollEnd;
 import 'ios_app.dart';
 import 'ios_mine.dart' show iosEditProxy;
 import 'ios_theme.dart';
@@ -71,10 +71,9 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
               child: _SearchField(onTap: (rect) => openSearch(context, origin: rect)),
             ),
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(top: Space.x2),
-                child: TextChips(items: [('全部题材', null, false), for (final t in AppConfig.themes) (t.$1, null, false)], selected: _theme, onSelect: _selectTheme),
-              ),
+              // 上留白由 [TextChips] 自己出（它上下同值），这里不再套 padding——
+              // 外面再写一份就会变成「发现页松、书架页紧」。
+              child: TextChips(items: [('全部题材', null, false), for (final t in AppConfig.themes) (t.$1, null, false)], selected: _theme, onSelect: _selectTheme),
             ),
             if (pager != null) ..._themeSlivers(pager) else ..._overviewSlivers(),
             SliverToBoxAdapter(child: SizedBox(height: Dock.clearance(context))),
@@ -91,9 +90,26 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
     }
     return [
       SliverToBoxAdapter(
-        child: IosSection('今日更新', action: '更多', onAction: () => Navigator.of(context).push(appRoute((_) => const IosLatestPage()))),
+        child: IosSection(
+          '今日更新',
+          // 上留白由 [TextChips] 自己出，这里不再补。
+          //
+          // 真机量：胶囊上沿到搜索框底 7.6dp，胶囊下沿到标题墨迹原本 23.6dp——
+          // 三倍。多出来的是胶囊自己的 [TextChips.below] 8 之外又补了一层区块
+          // 上留白。归零之后下段只剩胶囊那 8，加上标题行框自身在 21×1.2 里的
+          // 上半 leading（约 7），墨迹落在 15 上下——和上面的 7.6 同一个量级，
+          // 不再往下塌一大截。
+          top: 0,
+          action: '更多',
+          onAction: () => Navigator.of(context).push(appRoute((_) => const IosLatestPage())),
+        ),
       ),
-      SliverToBoxAdapter(child: SizedBox(height: 206, child: _latestRow())),
+      // 横排卡片的高度按内容算，不写死 206。
+      //
+      // 写死的时候，一行的书名比两行的矮 18dp，卡片框却还是 206——底下多出来
+      // 的空白直接叠进「人气排行」的上留白，于是它和「今日更新」前面永远差一截。
+      // 内容占多少就占多少，区块间距才只由一个值决定。
+      SliverToBoxAdapter(child: SizedBox(height: _railExtent(context), child: _latestRow())),
       const SliverToBoxAdapter(child: IosSection('人气排行', note: '按人气增长')),
       SliverToBoxAdapter(
         child: Padding(
@@ -124,7 +140,10 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
     return [
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(Space.page, Space.x5, Space.page, Space.x3),
+          // 上留白归胶囊：这一行同样紧跟在题材胶囊下面，和「今日更新」一样
+          // 不能再补 [Space.beforeSection]——胶囊已经出了 8，再叠 16 就是
+          // 胶囊下沿到标题 30+，而上沿到搜索框只有 7.6。
+          padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.afterSection),
           child: Row(children: [
             Text(name, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700, color: IosColors.ink)),
             const SizedBox(width: 8),
@@ -154,7 +173,7 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
               crossAxisCount: 3,
               crossAxisSpacing: Space.x3 + 2,
               mainAxisSpacing: Space.x4 + 2,
-              mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + Space.x2 + 40,
+              mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + CoverCaption.extent(MediaQuery.textScalerOf(context)),
             ),
             itemCount: pager.items.isEmpty && pager.loading ? 6 : pager.items.length,
             itemBuilder: (context, i) => pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: pager.items[i]),
@@ -162,6 +181,25 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
         ),
       SliverToBoxAdapter(child: _Footer(pager: pager)),
     ];
+  }
+
+  /// 横排卡片一格的高度：封面 + 书名两行 + 作者一行，全按真实行高算。
+  /// 和书架、发现网格一样把书名固定成两行高，一行书名不会让下面那行往上飘。
+  static const _railWidth = 104.0;
+  static const _railGapCover = 7.0;
+  static const _railNameSize = 14.0;
+  static const _railNameLine = 1.3;
+  static const _railGapMeta = 2.0;
+  static const _railMetaSize = 12.0;
+  static const _railMetaLine = 1.45;
+
+  static double _railExtent(BuildContext context) {
+    final s = MediaQuery.textScalerOf(context);
+    return coverHeightFor(_railWidth) +
+        _railGapCover +
+        s.scale(_railNameSize) * _railNameLine * 2 +
+        _railGapMeta +
+        s.scale(_railMetaSize) * _railMetaLine;
   }
 
   Widget _latestRow() => FutureBuilder<PageResult<ComicBrief>>(
@@ -177,23 +215,48 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             itemCount: list?.length ?? 4,
             separatorBuilder: (_, _) => const SizedBox(width: 14),
             itemBuilder: (context, i) => SizedBox(
-              width: 104,
+              width: _railWidth,
               child: list == null
-                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Redacted(width: 104, height: coverHeightFor(104)),
-                      const SizedBox(height: 8),
-                      const Redacted(width: 84, height: 15),
-                      const SizedBox(height: 6),
-                      const Redacted(width: 56, height: 13),
-                    ])
+                  ? Builder(builder: (context) {
+                      // 骨架的高度要按**缩放后**的字号算，否则系统字号放大时
+                      // 数据一回来整排文字块会突然长高，卡片弹一下。尺寸仍然
+                      // 取真卡片的常量，只是和 [_railExtent] 用同一套折算。
+                      final s = MediaQuery.textScalerOf(context);
+                      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Redacted(width: _railWidth, height: coverHeightFor(_railWidth)),
+                        const SizedBox(height: _railGapCover),
+                        Redacted(width: 84, height: s.scale(_railNameSize)),
+                        const SizedBox(height: _railGapMeta),
+                        Redacted(width: 56, height: s.scale(_railMetaSize)),
+                      ]);
+                    })
                   : Pressable(
                       onTap: () => iosOpenDetail(context, list[i]),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        CoverImage(url: list[i].cover, title: list[i].name, width: 104, height: coverHeightFor(104), radius: 6),
-                        const SizedBox(height: 7),
-                        Text(list[i].name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, height: 1.3, fontWeight: FontWeight.w600, color: IosColors.ink)),
-                        const SizedBox(height: 2),
-                        Text(list[i].authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: IosColors.muted)),
+                        CoverImage(url: list[i].cover, title: list[i].name, width: _railWidth, height: coverHeightFor(_railWidth), radius: 6),
+                        const SizedBox(height: _railGapCover),
+                        // 书名固定两行高、贴底对齐：一行书名和两行书名的作者行
+                        // 落在同一条基线上，也不会把卡片撑高。
+                        SizedBox(
+                          height: MediaQuery.textScalerOf(context).scale(_railNameSize) * _railNameLine * 2,
+                          child: Align(
+                            alignment: Alignment.bottomLeft,
+                            child: Text(list[i].name, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _railNameSize, height: _railNameLine, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                          ),
+                        ),
+                        const SizedBox(height: _railGapMeta),
+                        // 作者行同样钉死高度，理由和上面书名一样，但这里更隐蔽：
+                        // 行高写 1.45 × 12 = 17.4，可 CJK 回退字体的 ascent+descent
+                        // 更大，RenderParagraph 会把行框抬到 19.0——比算出来的多 1.6，
+                        // 于是整列超出 [_railExtent] 报「overflowed by 1.6 pixels」。
+                        // 盒子高度直接定义行框，多出来的部分被裁掉而不是往下挤。
+                        SizedBox(
+                          height: MediaQuery.textScalerOf(context).scale(_railMetaSize) * _railMetaLine,
+                          child: Align(
+                            alignment: Alignment.bottomLeft,
+                            child: Text(list[i].authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _railMetaSize, height: _railMetaLine, color: IosColors.muted)),
+                          ),
+                        ),
                       ]),
                     ),
             ),
@@ -301,10 +364,32 @@ class _GridTile extends StatelessWidget {
             aspectRatio: 1 / kCoverAspect,
             child: LayoutBuilder(builder: (context, c) => CoverImage(url: comic.cover, title: comic.name, width: c.maxWidth, height: c.maxHeight, radius: 6)),
           ),
-          const SizedBox(height: 7),
-          Text(comic.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: IosColors.ink)),
-          const SizedBox(height: 2),
-          Text(comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: IosColors.muted)),
+          // 规格和书架网格共用 [CoverCaption]：同一个三列网格，两页不能一个
+          // 8/15/13、一个 7/14/12，也不能一边固定两行、一边只给一行。
+          const SizedBox(height: CoverCaption.gapAfterCover),
+          SizedBox(
+            height: MediaQuery.textScalerOf(context).scale(CoverCaption.nameSize) * CoverCaption.nameLine * CoverCaption.nameLines,
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Text(
+                comic.name,
+                maxLines: CoverCaption.nameLines,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: CoverCaption.nameSize, height: CoverCaption.nameLine, fontWeight: FontWeight.w600, color: IosColors.ink),
+              ),
+            ),
+          ),
+          const SizedBox(height: CoverCaption.gapNameMeta),
+          // 作者行钉死高度：13 × 1.45 = 18.85，而 CJK 回退字体的行框是 19.0，
+          // 多出的 0.15 只能由格子吸收，于是格子报「overflowed by 0.15 pixels」。
+          // 和上面书名、横排卡片一样，盒子定义行框，多的部分裁掉而不是往下挤。
+          SizedBox(
+            height: MediaQuery.textScalerOf(context).scale(CoverCaption.metaSize) * CoverCaption.metaLine,
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Text(comic.authorText, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: CoverCaption.metaSize, height: CoverCaption.metaLine, color: IosColors.muted)),
+            ),
+          ),
         ]),
       );
 }
@@ -459,7 +544,7 @@ class _IosLatestPageState extends State<IosLatestPage> {
                         crossAxisCount: 3,
                         crossAxisSpacing: Space.x3 + 2,
                         mainAxisSpacing: Space.x4 + 2,
-                        mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + Space.x2 + 40,
+                        mainAxisExtent: (MediaQuery.sizeOf(context).width - Space.page * 2 - (Space.x3 + 2) * 2) / 3 * kCoverAspect + CoverCaption.extent(MediaQuery.textScalerOf(context)),
                       ),
                       itemCount: _pager.items.isEmpty && _pager.loading ? 9 : _pager.items.length,
                       itemBuilder: (context, i) => _pager.items.isEmpty ? const _GridPlaceholder() : _GridTile(comic: _pager.items[i]),

@@ -4,6 +4,9 @@ import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 
 import '../core/config.dart';
 import '../core/models.dart';
+import '../core/store.dart';
+import 'cover_frame.dart';
+import 'tokens.dart' show Space;
 
 /// 内置示例作品的封面以 `sample:` 开头，由 [SampleCover] 绘制。
 const kSampleCoverPrefix = 'sample:';
@@ -30,6 +33,30 @@ bool _darkTheme(BuildContext context) => Theme.of(context).brightness == Brightn
 Color _coverTonal(BuildContext context) => _darkTheme(context) ? const Color(0xFF26272B) : const Color(0xFFEFEFF1);
 Color _coverInk(BuildContext context) => _darkTheme(context) ? const Color(0xFF9C9DA5) : const Color(0xFF71727A);
 
+/// 三列网格的封面文字块规格：书架和发现共用这一份。
+///
+/// 以前两页各写一套：书架 8 / 15 / 2 行 / 13，发现 7 / 14 / 1 行 / 12，
+/// 而且发现页的格子高度是「封面 + 8 + 40」这种手抄的魔术数。两边并排看
+/// 就是同一件事两个样子；字号一放大，发现的格子还会先溢出。
+///
+/// 行高写死而不是交给字体度量：各家 ROM 的 ascent+descent 差零点几像素，
+/// SliverGrid 就会报「BOTTOM OVERFLOWED BY 1.00 PIXELS」。
+class CoverCaption {
+  CoverCaption._();
+
+  static const gapAfterCover = Space.x2;
+  static const nameSize = 15.0;
+  static const nameLines = 2;
+  static const nameLine = 1.3;
+  static const gapNameMeta = 2.0;
+  static const metaSize = 13.0;
+  static const metaLine = 1.45;
+
+  /// 封面底边到格子底边的高度，网格的 `mainAxisExtent` 直接用它。
+  static double extent(TextScaler scaler) =>
+      gapAfterCover + scaler.scale(nameSize) * nameLine * nameLines + gapNameMeta + scaler.scale(metaSize) * metaLine;
+}
+
 class CoverImage extends StatelessWidget {
   const CoverImage({
     super.key,
@@ -48,26 +75,40 @@ class CoverImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget child;
+    // 「自定义封面效果」只加一层绘制，不改布局、不改裁切；关掉时一个像素都不多画。
+    //
+    // 框是跟着**加载状态**走的，所以它挂在图片自己的三个回调里，而不是外层
+    // Stack 上：占位色块和加载失败时显示的都是 `_TitleCover` 那张平底书名卡，
+    // 这时候铺纸纹只会显脏——`plain` 必须按实际显示的东西决定，外层判断不了。
+    Widget framed(BuildContext context, Widget base, {required bool plain}) => ListenableBuilder(
+          listenable: ReaderPrefs.instance,
+          builder: (context, _) => ClipRRect(
+            borderRadius: BorderRadius.circular(radius),
+            child: SizedBox(
+              width: width,
+              height: height,
+              child: Stack(fit: StackFit.expand, children: [
+                base,
+                if (ReaderPrefs.instance.coverFrame) CoverFrame(small: width < 64, plain: plain, radius: radius),
+              ]),
+            ),
+          ),
+        );
+
     if (url.startsWith(kSampleCoverPrefix)) {
-      child = SampleCover(title: url.substring(kSampleCoverPrefix.length));
-    } else {
-      final fallback = _TitleCover(title: title);
-      child = url.isEmpty
-          ? fallback
-          : CachedNetworkImage(
-              imageUrl: url,
-              httpHeaders: AppConfig.imageHeaders,
-              fit: BoxFit.cover,
-              fadeInDuration: const Duration(milliseconds: 180),
-              memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
-              placeholder: (context, _) => ColoredBox(color: _coverTonal(context)),
-              errorWidget: (_, _, _) => fallback,
-            );
+      return framed(context, SampleCover(title: url.substring(kSampleCoverPrefix.length)), plain: false);
     }
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: SizedBox(width: width, height: height, child: child),
+    final fallback = _TitleCover(title: title);
+    if (url.isEmpty) return framed(context, fallback, plain: true);
+    return CachedNetworkImage(
+      imageUrl: url,
+      httpHeaders: AppConfig.imageHeaders,
+      fit: BoxFit.cover,
+      fadeInDuration: const Duration(milliseconds: 180),
+      memCacheWidth: (width * MediaQuery.devicePixelRatioOf(context)).round(),
+      placeholder: (context, _) => framed(context, ColoredBox(color: _coverTonal(context)), plain: true),
+      errorWidget: (context, _, _) => framed(context, fallback, plain: true),
+      imageBuilder: (context, provider) => framed(context, Image(image: provider, fit: BoxFit.cover), plain: false),
     );
   }
 }
@@ -157,6 +198,23 @@ class Pager<T> extends ChangeNotifier {
   bool hasMore = true;
   int total = 0;
   int _generation = 0;
+  bool _disposed = false;
+
+  /// 切题材、退出页面时旧分页器会被立刻销毁，但它发出的请求还在路上；
+  /// 回来时 `notifyListeners()` 会抛「used after being disposed」。
+  /// 销毁后所有通知都吞掉，状态照常写入（对象已经没人引用，写完就回收）。
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _generation++; // 让在途请求的结果落进「代数不符」，直接丢掉。
+    super.dispose();
+  }
 
   Future<void> loadMore() async {
     if (loading || !hasMore) return;

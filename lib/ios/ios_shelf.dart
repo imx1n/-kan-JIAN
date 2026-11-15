@@ -12,7 +12,7 @@ import '../ui/format.dart' show formatDay;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart' show Dock, Space;
-import '../ui/widgets.dart' show CoverImage, coverHeightFor, kCoverAspect;
+import '../ui/widgets.dart' show CoverCaption, CoverImage, coverHeightFor, kCoverAspect;
 import 'ios_app.dart';
 import 'ios_theme.dart';
 import 'ios_wenku.dart';
@@ -179,10 +179,23 @@ class _IosShelfPageState extends State<IosShelfPage> {
     final visible = [for (final e in inSection) if (_match(e)) e];
     // 「有更新」只统计漫画：源站给轻小说的 `hasUpdate` 恒为 false，统计出来也是 0。
     final updates = [for (final e in inSection) if (e.hasUpdate) e];
-    final resume = visible.where((e) => e.started).firstOrNull;
+    // 续读卡不受状态筛选影响。
+    //
+    // 069 稿画的就是这一态：筛「已完结」筛空了，上面那张大卡照旧是《電鋸人》
+    // （它本身是連載中）。读者的理解是「最近在读的那本一直在这儿」，而不是
+    // 「我按了个筛选，连正在读的书都不见了」。早先这里取的是 `visible`，
+    // 筛成空集时整张卡跟着消失，标题和空态一起上移半屏，和稿子对不上。
+    final resume = inSection.where((e) => e.started).firstOrNull;
     // 「最近在读」已经在上面用大卡片展示过，藏书网格里就不再出现第二遍。
     // 同一本书两个尺寸、两种封面呈现方式并排摆着，视觉上非常撕裂。
     final gridItems = [for (final e in visible) if (!identical(e, resume)) e];
+    // 网格为空时筛选胶囊跟着区块标题走，贴着它筛出来的空态。
+    //
+    // 设计稿 069 / 071 画的都是这一态：网格里有书时胶囊留在分段控件下面
+    // （062），结果为空时它下沉到「我的藏书 / 其他藏书」标题下一行——空态
+    // 说的是「没有已完结的」，那颗「已完结」胶囊就该紧挨着它，否则读者要往上
+    // 半屏去找自己按了哪个筛选。这是位置跟着状态变，不是两套排版。
+    final chipsInline = gridItems.isEmpty;
     final top = MediaQuery.paddingOf(context).top;
     final novel = _section == _Section.novel;
     return CustomScrollView(
@@ -195,8 +208,11 @@ class _IosShelfPageState extends State<IosShelfPage> {
           const SliverToBoxAdapter(child: _FirstRun())
         else ...[
           // 顶层分区。漫画 / 轻小说各有自己的筛选维度和续读卡片。
+          //
+          // 底边不再给留白：胶囊那一行自己带着 [TextChips.above]，两边各写一份
+          // 就是「上 4 / 下 12」那种不对称的来源。
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, Space.x1),
+            padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, 0),
             sliver: SliverToBoxAdapter(
               child: IosSegmented(
                 options: const ['漫画', '轻小说'],
@@ -209,19 +225,28 @@ class _IosShelfPageState extends State<IosShelfPage> {
               ),
             ),
           ),
-          SliverToBoxAdapter(
-            child: _fade(
-              TextChips(
-                // 漫画区是「状态」，轻小说区只有「全部 / 在读」——轻小说没有连载状态。
-                // 两区的标签不能只靠下标对齐（同样的 1 号位在漫画区是「有更新」、
-                // 在轻小说区是「在读」），所以这里把筛选项和标签成对写出来。
-                items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
-                selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
-                onSelect: (i) => setState(() => _filter = _filters[i]),
+          if (!chipsInline)
+            SliverToBoxAdapter(
+              child: _fade(
+                TextChips(
+                  // 漫画区是「状态」，轻小说区只有「全部 / 在读」——轻小说没有连载状态。
+                  // 两区的标签不能只靠下标对齐（同样的 1 号位在漫画区是「有更新」、
+                  // 在轻小说区是「在读」），所以这里把筛选项和标签成对写出来。
+                  items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
+                  selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
+                  onSelect: (i) => setState(() => _filter = _filters[i]),
+                ),
               ),
             ),
-          ),
-          if (resume != null) SliverToBoxAdapter(child: _fade(_Resume(entry: resume))),
+          if (resume != null)
+            SliverToBoxAdapter(
+              child: _fade(
+                // 上面紧跟的那一块决定这里要不要出留白：胶囊在顶部时它已经出了
+                // [TextChips.below]，续读卡不能再叠一份；胶囊下沉时顶上就是分段
+                // 控件（底边 0），这一处补回同样的 8。
+                Padding(padding: EdgeInsets.only(top: chipsInline ? TextChips.below : 0), child: _Resume(entry: resume)),
+              ),
+            ),
           if (!novel && _filter == _Filter.all && updates.isNotEmpty) ...[
             SliverToBoxAdapter(
               child: _fade(IosSection('有更新', count: '${updates.length}', action: '全部', onAction: () => setState(() => _filter = _Filter.updated))),
@@ -234,7 +259,9 @@ class _IosShelfPageState extends State<IosShelfPage> {
           SliverToBoxAdapter(
             child: _fade(
               IosSection(
-                novel ? '轻小说书架' : '我的藏书',
+                // 轻小说分区叫「其他藏书」：上面那张续读大卡才是主体，网格里是
+                // 之外的书。叫「轻小说书架」会让空态读成「你根本没有轻小说」。
+                novel ? '其他藏书' : '我的藏书',
                 count: '${gridItems.length}',
                 action: _prefs.shelfSort == 0 ? '最近阅读' : '更新时间',
                 actionIcon: 'down',
@@ -245,11 +272,34 @@ class _IosShelfPageState extends State<IosShelfPage> {
               ),
             ),
           ),
-          // 只有一本、而且正好是「最近在读」时，网格是空的——这时不显示空态文案，
-          // 上方那张续读卡片已经是完整的入口。
-          if (gridItems.isEmpty && visible.isEmpty)
-            SliverToBoxAdapter(child: _fade(_FilterEmpty(novel: novel, updated: _filter == _Filter.updated)))
-          else if (gridItems.isNotEmpty)
+          if (chipsInline) ...[
+            SliverToBoxAdapter(
+              child: _fade(
+                TextChips(
+                  items: [for (final f in _filters) (_labelOf(f), _countOf(f, inSection), f == _Filter.updated && updates.isNotEmpty)],
+                  selected: _filters.indexOf(_filter).clamp(0, _filters.length - 1),
+                  onSelect: (i) => setState(() => _filter = _filters[i]),
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: _fade(
+                _ShelfEmpty(
+                  novel: novel,
+                  filter: _filter,
+                  // 只有「筛出来的那一本正好就是上面那张大卡」时才算「书在别处」。
+                  // 续读卡现在不跟筛选走，筛「已完结」时它可能压根不属于这一筛，
+                  // 那时空态该说的是「暂无已完结的藏书」，不是「已显示在上方」。
+                  only: visible.contains(resume) ? resume : null,
+                  // 「查看全部」只在「筛空了」时出现（069 稿）。071 稿的空态是
+                  // 「其他藏书为空 /《雨停之前》已显示在上方」——书就在上面那张
+                  // 大卡里，读者已经看得到，再给一颗「查看全部」反而是死路：
+                  // 点回「全部」也只是把同一本书再摆一次。所以书在别处时不给按钮。
+                  onShowAll: _filter == _Filter.all || visible.contains(resume) ? null : () => setState(() => _filter = _Filter.all),
+                ),
+              ),
+            ),
+          ] else
             SliverAnimatedOpacity(
               opacity: _sectionOpacity,
               duration: Motion.of(context, 150),
@@ -304,7 +354,9 @@ class _Resume extends StatelessWidget {
     final coverH = coverHeightFor(coverW);
     final where = e.kind == ShelfKind.manga && e.pageCount > 0 ? '${e.chapterName} · ${e.page + 1} / ${e.pageCount} 页' : (e.chapterName ?? '');
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Space.page, Space.x3, Space.page, 0),
+      // 上留白归调用方：[TextChips] 已经出了 [TextChips.below]，这里再写一份
+      // 就是「胶囊底到续读卡 20dp、胶囊顶到分段控件 8dp」——差 12 的空条。
+      padding: const EdgeInsets.fromLTRB(Space.page, 0, Space.page, 0),
       child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
         Pressable(
           onTap: () => e.kind == ShelfKind.manga ? iosOpenDetail(context, briefOfEntry(e)) : iosContinue(context, e),
@@ -419,23 +471,8 @@ class _Tile extends StatelessWidget {
   final ShelfEntry entry;
   final VoidCallback onLongPress;
 
-  // 封面以下那三行动作的高度必须可算。行高一律写死，不能交给字体度量——
-  // 各家 ROM 的默认字体 ascent+descent 不一样，差出来的零点几像素
-  // 会被 SliverGrid 报成「BOTTOM OVERFLOWED BY 1.00 PIXELS」。
-  static const _gapAfterCover = 8.0;
-  static const _nameSize = 15.0;
-  static const _nameLines = 2;
-  static const _nameLine = 1.3;
-  static const _gapNameMeta = 2.0;
-  static const _metaSize = 13.0;
-  static const _metaLine = 1.45;
-
-  /// 封面下方（封面底边到格子底边）需要的高度，网格的 `mainAxisExtent` 直接用它。
-  static double spaceBelowCover(TextScaler scaler) =>
-      _gapAfterCover +
-      scaler.scale(_nameSize) * _nameLine * _nameLines +
-      _gapNameMeta +
-      scaler.scale(_metaSize) * _metaLine;
+  // 文字块规格在 [CoverCaption] 里，和发现页共用同一份。
+  static double spaceBelowCover(TextScaler scaler) => CoverCaption.extent(scaler);
 
   @override
   Widget build(BuildContext context) {
@@ -479,7 +516,7 @@ class _Tile extends StatelessWidget {
             ]),
           ),
         ),
-        SizedBox(height: _gapAfterCover),
+        const SizedBox(height: CoverCaption.gapAfterCover),
         // 标题固定占满两行的高度，即使只有一行字也要占住。
         //
         // 这里是「漫画和轻小说封面大小不一」的真正原因：标题在 `maxLines: 2`
@@ -488,37 +525,127 @@ class _Tile extends StatelessWidget {
         // 封面吃掉了——同一行里小说的封面比漫画高一整行文字。
         // 固定成两行之后，每个格子的封面高度和比例完全一致。
         SizedBox(
-          height: MediaQuery.textScalerOf(context).scale(_nameSize) * _nameLine * _nameLines,
-          child: Text(e.name, maxLines: _nameLines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _nameSize, height: _nameLine, color: IosColors.ink)),
+          height: MediaQuery.textScalerOf(context).scale(CoverCaption.nameSize) * CoverCaption.nameLine * CoverCaption.nameLines,
+          // 书名在固定高度里贴底对齐。
+          //
+          // 高度必须固定（上面那段：不固定就会让同一行的封面高低不一），
+          // 但固定之后一行书名底下会空出一整行，正文和书名之间的 2dp
+          // 就变成了「两行字 + 一条 20dp 的沟」。贴底之后这条沟永远只有
+          // [CoverCaption.gapNameMeta]，多出来的留白回到封面和书名之间；
+          // 同一行里每本书的说明行也正好落在同一条基线上。
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Text(e.name, maxLines: CoverCaption.nameLines, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: CoverCaption.nameSize, height: CoverCaption.nameLine, color: IosColors.ink)),
+          ),
         ),
-        const SizedBox(height: _gapNameMeta),
-        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: _metaSize, height: _metaLine, color: IosColors.muted)),
+        const SizedBox(height: CoverCaption.gapNameMeta),
+        // 作者行同样钉死高度：13 × 1.45 = 18.85，而 CJK 回退字体的行框是
+        // 19.0，多出的 0.15 会顶破 `CoverCaption.extent` 算出来的格子高度。
+        // 发现页的网格早就是这个写法，这里之前漏掉了。
+        SizedBox(
+          height: MediaQuery.textScalerOf(context).scale(CoverCaption.metaSize) * CoverCaption.metaLine,
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: CoverCaption.metaSize, height: CoverCaption.metaLine, color: IosColors.muted)),
+          ),
+        ),
       ]),
     );
   }
 }
 
-class _FilterEmpty extends StatelessWidget {
-  const _FilterEmpty({required this.novel, required this.updated});
+/// 藏书网格为空时的说明。
+///
+/// 两种情况分开写：筛选把内容筛空了，和这个分区本来就没有书。
+/// 前者必须给出「怎么出去」（查看全部），后者不必——本来就没什么可看的。
+///
+/// 文案按设计稿 069 / 071：
+/// - 「暂无已完结的藏书 / 你的藏书仍保留在「全部」中 / 查看全部」
+/// - 「其他藏书为空 / 《雨停之前》已显示在上方」
+class _ShelfEmpty extends StatelessWidget {
+  const _ShelfEmpty({required this.novel, required this.filter, this.only, this.onShowAll});
 
   final bool novel;
-  final bool updated;
+  final _Filter filter;
+
+  /// 筛出来的那一本正好是上面的大卡片（最近在读）时，书在别处，不是没有。
+  final ShelfEntry? only;
+
+  /// null = 不显示「查看全部」（已经在「全部」里了，或者没有别的筛选可回）。
+  final VoidCallback? onShowAll;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-            updated ? '追更的作品暂时都没有新话，下拉可以重新检查。' : (novel ? '书架上还没有轻小说。' : '没有符合条件的作品。'),
-            style: TextStyle(fontSize: 15, height: 1.6, color: IosColors.muted),
+  Widget build(BuildContext context) {
+    final (title, message) = _copy;
+    return Padding(
+      // 胶囊行底到图标顶：069 稿量出来 58px，按本机比例 ≈53dp；原来写 x4（16）
+      // 实测只有 30，空了 23。x7 + x2 = 40 实测会到 ≈54。
+      // 空态和胶囊之间不需要再留白：胶囊自己带着 [TextChips.below]，
+      // 这里只补「贴不贴顶」的那一点，`top` 是唯一来源。
+      padding: const EdgeInsets.fromLTRB(Space.page, Space.x7 + Space.x2, Space.page, 0),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        AppIcon('book', size: 40, color: IosColors.muted, stroke: 1.4),
+        // 图标底到标题墨迹顶：069 稿 ≈29dp，原来写 x4（16）实测 24；x5 实测会到 ≈28。
+        const SizedBox(height: Space.x5),
+        // 字号按 069 稿的墨迹宽度反推：稿右栏是 360dp 画布（内容左边距 22px
+        // 合 20dp，1px ≈ 0.907dp），标题 8 字墨迹 157px ≈ 142dp，每字 17.8dp；
+        // 原来写 19 号字，实测每字 19.0dp，宽了 7%。18 号落在 144dp。
+        Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: IosColors.ink)),
+        // 标题到说明：069 稿墨迹间 16px ≈ 14.5dp，x2 实测 16.4，差半个台阶内，不追究。
+        const SizedBox(height: Space.x2),
+        // 说明 13 字墨迹 169px ≈ 153dp，每字 11.8dp；14 号实测每字 14.1dp，
+        // 大了近两成——大一号的说明会把整块重心压到说明行上。12 号约 157dp。
+        Text(message, textAlign: TextAlign.center, style: TextStyle(fontSize: 12, height: 1.5, color: IosColors.muted)),
+        if (onShowAll != null) ...[
+          // 说明到按钮：069 稿墨迹间 25px ≈ 22.7dp，x5（20）实测 22.9，已经对，不动。
+          const SizedBox(height: Space.x5),
+          // 069 稿是居中的紧凑胶囊：155 × 46px ≈ 140.6 × 41.7dp。
+          // 外面套 Center 让它按内容收紧，宽度用 minWidth 兜底而不是钉死——
+          // 钉死 142 时字号放大到 1.7 倍后「查看全部」要 108dp，加上左右各 20
+          // 就超出了盒子，会裁字。按内容撑，正常字号下仍是 142。
+          Center(
+            child: Pressable(
+              haptic: true,
+              onTap: onShowAll,
+              child: Container(
+                height: 42,
+                constraints: const BoxConstraints(minWidth: 142),
+                // 中性胶囊：这是「退一步」的动作，不能和主操作（反相实心）抢。
+                padding: const EdgeInsets.symmetric(horizontal: Space.x5),
+                decoration: BoxDecoration(color: IosColors.faint, borderRadius: BorderRadius.circular(21)),
+                // widthFactor 1 让盒子跟着文字收紧；Container.alignment 在 Center
+                // 的松约束下会把整行撑满，那是之前按钮变全宽的根因。
+                child: Center(
+                  widthFactor: 1,
+                  child: Text('查看全部', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: IosColors.ink)),
+                ),
+              ),
+            ),
           ),
-          if (novel) ...[
-            TextAction(label: '登录轻小说账号，同步源站书架', onTap: () => Navigator.of(context).push(appRoute<void>((_) => const IosWenkuPage()))),
-            const SizedBox(height: 10),
-            TextAction(label: '打开示例《雨停之前》', onTap: () => iosOpenNovel(context)),
-          ],
-        ]),
-      );
+        ],
+        if (novel && filter == _Filter.all) ...[
+          const SizedBox(height: Space.x3),
+          TextAction(label: '登录轻小说账号，同步源站书架', onTap: () => Navigator.of(context).push(appRoute<void>((_) => const IosWenkuPage()))),
+          const SizedBox(height: Space.x2),
+          TextAction(label: '打开示例《雨停之前》', onTap: () => iosOpenNovel(context)),
+        ],
+      ]),
+    );
+  }
+
+  /// 标题 + 说明。顺序按「为什么空」而不是「按哪个胶囊」：读者需要的是原因。
+  (String, String) get _copy {
+    if (only != null) {
+      return novel ? ('其他藏书为空', '《${only!.name}》已显示在上方') : ('藏书里只有这一本', '《${only!.name}》已显示在上方');
+    }
+    return switch (filter) {
+      _Filter.finished => ('暂无已完结的藏书', '你的藏书仍保留在「全部」中'),
+      _Filter.ongoing => ('暂无连载中的藏书', '你的藏书仍保留在「全部」中'),
+      _Filter.updated => ('暂时没有新话', '追更的作品都没有更新，下拉可以重新检查'),
+      _Filter.reading => ('还没有在读的作品', novel ? '翻开一本，进度会记在这里' : '打开作品开始阅读，就会出现在这里'),
+      _Filter.all => novel ? ('书架上还没有轻小说', '登录账号可以同步源站书架') : ('书架上还没有作品', '去发现里挑一本，点追更就会出现在这里'),
+    };
+  }
 }
 
 /// 首次使用：说明作品怎么进书架，给出热门推荐。

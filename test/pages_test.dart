@@ -152,18 +152,18 @@ void main() {
     expect(find.text('发现新版本 v0.4.0'), findsNothing);
   });
 
-  uiTest('我的：外观、阅读两个设置入口，版本号', (tester) async {
+  uiTest('我的：母项列表，阅读器与外观入口、关于里的版本号', (tester) async {
     await pump(tester, const IosMinePage());
     await tester.pump(const Duration(milliseconds: 50));
-    expect(find.text('外观设置'), findsOneWidget);
-    expect(find.text('阅读设置'), findsOneWidget);
-    expect(find.text('漫画翻页方向'), findsNothing);
-    expect(find.text('跟随系统'), findsOneWidget);
-    await tester.scrollUntilVisible(find.textContaining('当前 v0.3.0'), 200);
-    expect(find.textContaining('当前 v0.3.0'), findsOneWidget);
+    // 设置页是「母项 → 子项」：一屏只列入口，深层开关不铺在这里。
+    expect(find.text('阅读器'), findsOneWidget);
+    expect(find.text('外观'), findsOneWidget);
+    expect(find.text('数据管理'), findsOneWidget);
+    expect(find.text('关于 栞间'), findsOneWidget);
+    expect(find.text('阅读设置'), findsNothing);
+    expect(find.text('跟随系统'), findsNothing);
 
-    await tester.scrollUntilVisible(find.text('阅读设置'), -200);
-    await tester.tap(find.text('阅读设置'));
+    await tester.tap(find.text('阅读器'));
     await tester.pumpAndSettle();
     // 阅读方式把「单页横/纵 × 正反 + 条漫」合成一个选项，不再单列「翻页方向」。
     expect(find.text('阅读方式'), findsOneWidget);
@@ -175,6 +175,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.mangaScroll, isTrue);
     expect(ReaderPrefs.instance.mangaMode, 4);
+  });
+
+  // 版本号是 PackageInfo → UpdateService.currentVersion() 读回来的，这条链路
+  // 以前没有断言：mock 的 version 字段换了、或者版本号渲染位置挪了，测试也不会红。
+  // 单独一条用例，因为返回钮是自绘的 GlassButton，没法在同一个页面树里回来。
+  uiTest('我的：关于里的版本号', (tester) async {
+    await pump(tester, const IosMinePage());
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('关于 栞间'));
+    await tester.pumpAndSettle();
+    expect(find.text('关于 栞间'), findsOneWidget);
+    expect(find.textContaining('当前 v0.3.0'), findsOneWidget);
   });
 
   uiTest('账号同步：未登录显示登录表单，填好账号密码才能登录', (tester) async {
@@ -195,7 +207,7 @@ void main() {
     expect(AccountService.instance.loggedIn, isFalse);
   });
 
-  uiTest('外观设置：深色模式整体切换，减少透明度', (tester) async {
+  uiTest('外观设置：深色模式整体切换，减少透明度，封面效果默认关闭', (tester) async {
     tester.view.physicalSize = const Size(1179, 2556);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
@@ -203,13 +215,22 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text('我的').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('外观设置'));
+    await tester.tap(find.text('外观'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(AppSwitch));
+    // 第一个开关是「减少透明度」；封面效果是第二个，默认关闭。
+    expect(ReaderPrefs.instance.coverFrame, isFalse);
+    await tester.tap(find.byType(AppSwitch).first);
     await tester.pumpAndSettle();
     expect(ReaderPrefs.instance.reduceTransparency, isTrue);
     expect(GlassScope.reduce.value, isTrue);
+
+    await tester.tap(find.text('自定义封面效果'));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.coverFrame, isTrue);
+    await tester.tap(find.text('自定义封面效果'));
+    await tester.pumpAndSettle();
+    expect(ReaderPrefs.instance.coverFrame, isFalse);
 
     await tester.tap(find.text('深色模式'));
     await tester.pumpAndSettle();

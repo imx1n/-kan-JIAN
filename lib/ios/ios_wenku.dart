@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../core/api.dart' show ApiException;
 import '../core/store.dart';
 import '../core/wenku.dart';
-import '../core/wenku_models.dart';
 import '../ui/motion.dart';
 import 'ios_settings.dart' show SettingsPage;
 import 'ios_theme.dart';
@@ -275,9 +274,6 @@ class _IosWenkuPageState extends State<IosWenkuPage> {
     ];
   }
 }
-
-/// 书架里显示轻小说时用：源站书架的走向。
-String wenkuShelfSummary(WenkuShelfItem i) => i.bookmark.isEmpty ? '未开始' : '读到 ${i.bookmark}';
 
 /// 打开轻小说登录：已经登录返回 true，否则转到网页登录，成功返回 true。
 Future<bool> openWenkuLogin(BuildContext context) async {

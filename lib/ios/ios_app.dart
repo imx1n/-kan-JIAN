@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,7 +15,7 @@ import '../core/store.dart';
 import '../core/update_service.dart';
 import '../ui/format.dart' show formatBytes;
 import '../ui/icons.dart';
-import '../ui/tokens.dart' show Dock;
+import '../ui/tokens.dart' show Dock, ScrollEdge;
 import 'ios_detail.dart';
 import 'ios_discover.dart';
 import 'ios_mine.dart';
@@ -24,6 +25,7 @@ import 'ios_search.dart';
 import 'ios_shelf.dart';
 import '../core/wenku_web.dart';
 import '../ui/motion.dart';
+import '../ui/edge_blur.dart';
 import 'ios_theme.dart';
 import 'ios_wenku_novel.dart';
 
@@ -167,23 +169,39 @@ class _IosShellState extends State<IosShell> {
                 child: _TabStack(index: index, children: const [IosShelfPage(), IosDiscoverPage(), IosMinePage()]),
               ),
             ),
-            // 底部渐隐，让悬浮标签栏下的内容不抢视线。高度跟着标签栏的让位一起算，
-            // 否则手势条抬高标签栏后，渐隐会先于内容结束，露出一条硬边。
+            // 滚动边缘模糊：上下两端都有，这是 iOS 26 的定义（内容与固定控件
+            // 之间的过渡，作用在滚动轴两端），见 [ScrollEdge]。
+            //
+            // 两端强度差一个量级，不是笔误：顶部压着状态栏，那条带子是内容
+            // 钻出系统栏的唯一过渡，要够浓；底部是悬浮胶囊，胶囊外侧的内容
+            // 本该清楚，所以只用一点点力度让它「浮起来」。上一版底部给了
+            // 124dp 全宽带，白吃掉一整行内容，反而突兀。
             Positioned(
               left: 0,
               right: 0,
+              top: 0,
+              child: EdgeBlur(
+                height: ScrollEdge.topHeight(context),
+                sigma: ScrollEdge.topSigma,
+                tint: IosColors.bg,
+                tintAlpha: ScrollEdge.topTint,
+                reduce: GlassScope.reduced(context),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              // 锚在屏幕底边，不是手势区上沿。抬到 `Dock.inset` 的话手势区
+              // 那一条就留在带子外面，内容滚到底时会在底栏下方露出来。
+              // 高度里已经包含这段安全区，见 [ScrollEdge.bottomHeight]。
               bottom: 0,
-              height: Dock.clearance(context) + 40,
-              child: IgnorePointer(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [IosColors.bg.withValues(alpha: 0), IosColors.bg.withValues(alpha: .92)],
-                    ),
-                  ),
-                ),
+              child: EdgeBlur(
+                height: ScrollEdge.bottomHeight(context),
+                sigma: ScrollEdge.bottomSigma,
+                side: EdgeBlurSide.bottom,
+                tint: IosColors.bg,
+                tintAlpha: ScrollEdge.bottomTint,
+                reduce: GlassScope.reduced(context),
               ),
             ),
             _TabDock(index: index),
@@ -289,7 +307,20 @@ class _TabStackState extends State<_TabStack> {
       }
       // 标签栏的选中框跟着页面连续移动（原生就是这样，不是翻完才跳一格）。
       final p = _pages.hasClients ? _pages.page : null;
-      if (p != null && IosShell.pagePos.value != p) IosShell.pagePos.value = p;
+      if (p == null || IosShell.pagePos.value == p) return false;
+      // 构建期不能直接写：切页时 [didUpdateWidget] 会跳页，跳页会派发滚动通知，
+      // 通知落在这里时框架还在 build —— 直接赋值就是 markNeedsBuild during build，
+      // 调试期会抛异常，而且这条异常会占掉「本帧第一条错误」的位置，把后面
+      // 真正的布局溢出诊断压成一行摘要。构建期推到帧尾再写。
+      if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_pages.hasClients) return;
+          final q = _pages.page;
+          if (q != null && IosShell.pagePos.value != q) IosShell.pagePos.value = q;
+        });
+      } else {
+        IosShell.pagePos.value = p;
+      }
       return false;
     },
     child: PageView(
