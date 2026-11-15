@@ -600,13 +600,23 @@ class TextChips extends StatelessWidget {
   final int selected;
   final ValueChanged<int> onSelect;
 
+  /// 可点区域的最小高度。34 的胶囊在视觉上没问题，但手指点上下边缘容易落空，
+  /// 44 是两端（iOS / Material）都认的最小可点尺寸。
+  static const _hit = 44.0;
+
   @override
   Widget build(BuildContext context) {
     final pill = pillHeight(context);
+    // 行高至少 [_hit]，胶囊在行内居中。多出来的高度从上下留白里扣掉，
+    // 所以「胶囊下沿到下一块」的视觉间距仍然是 [below]，总占用不变。
+    final row = pill > _hit ? pill : _hit;
+    final inset = (row - pill) / 2;
+    final padTop = above - inset > 0 ? above - inset : 0.0;
+    final padBottom = below - inset > 0 ? below - inset : 0.0;
     return Padding(
-      padding: const EdgeInsets.only(top: above, bottom: below),
+      padding: EdgeInsets.only(top: padTop, bottom: padBottom),
       child: SizedBox(
-        height: pill,
+        height: row,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: Space.page),
@@ -627,7 +637,7 @@ class TextChips extends StatelessWidget {
             children: [
               for (var i = 0; i < items.length; i++) ...[
                 if (i > 0) const SizedBox(width: _gap),
-                _chip(context, i, pill),
+                _chip(context, i, pill, row),
               ],
             ],
           ),
@@ -636,62 +646,68 @@ class TextChips extends StatelessWidget {
     );
   }
 
-  Widget _chip(BuildContext context, int i, double pill) {
+  Widget _chip(BuildContext context, int i, double pill, double row) {
     final (label, count, dot) = items[i];
     final on = i == selected;
     // 行框要按**缩放后**的字号折算，不能按 15 写死：行框 = height × 实际字号，
     // 1.3 倍下 34 / 15 × 19.5 = 44.2，比胶囊高出 10dp，字就被容器裁掉上下两截。
     final s = MediaQuery.textScalerOf(context);
+    final inset = (row - pill) / 2;
     return Center(
       heightFactor: 1,
       child: Pressable(
         haptic: true,
         onTap: () => onSelect(i),
-        child: AnimatedContainer(
-          duration: Motion.of(context, 180),
-          curve: Motion.ease,
-          height: pill,
-          padding: const EdgeInsets.symmetric(horizontal: _pad),
-          // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。
-          decoration: BoxDecoration(color: on ? IosColors.faint : Colors.transparent, borderRadius: BorderRadius.circular(pill / 2)),
-          child: Center(
-            widthFactor: 1,
-            child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
-              if (dot) ...[
-                Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.ink, shape: BoxShape.circle)),
-                const SizedBox(width: 6),
-              ],
-              // 行框直接撑满胶囊高度、leading 上下平分。
-              //
-              // 不这么写的话，字在胶囊里看着偏上/偏下：CJK 字体的 ascent 远大于
-              // descent，Flutter 默认把多出来的 leading 按比例分摊（proportional），
-              // 墨迹就被推离几何中心，而且各家 ROM 的字体推的方向和幅度都不一样。
-              // 把 line box 固定成胶囊高度、leading 对半分之后，墨迹的光学中心
-              // 与胶囊中心重合，换字体、换字号都不会变。
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  height: pill / s.scale(15),
-                  leadingDistribution: TextLeadingDistribution.even,
-                  color: on ? IosColors.ink : IosColors.muted,
-                  fontWeight: on ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
-              if (count != null) ...[
-                const SizedBox(width: 5),
+        // 上下补到行高再进 Pressable：胶囊还是 34 的视觉，手指落点有 44。
+        // 补在 Pressable 里面而不是外面，是因为它 shrink-wrap 子节点。
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: inset > 0 ? inset : 0),
+          child: AnimatedContainer(
+            duration: Motion.of(context, 180),
+            curve: Motion.ease,
+            height: pill,
+            padding: const EdgeInsets.symmetric(horizontal: _pad),
+            // 选中靠字重 + 反相底，不靠色相（全 App 没有强调色）。
+            decoration: BoxDecoration(color: on ? IosColors.faint : Colors.transparent, borderRadius: BorderRadius.circular(pill / 2)),
+            child: Center(
+              widthFactor: 1,
+              child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+                if (dot) ...[
+                  Container(width: 6, height: 6, decoration: BoxDecoration(color: IosColors.ink, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                ],
+                // 行框直接撑满胶囊高度、leading 上下平分。
+                //
+                // 不这么写的话，字在胶囊里看着偏上/偏下：CJK 字体的 ascent 远大于
+                // descent，Flutter 默认把多出来的 leading 按比例分摊（proportional），
+                // 墨迹就被推离几何中心，而且各家 ROM 的字体推的方向和幅度都不一样。
+                // 把 line box 固定成胶囊高度、leading 对半分之后，墨迹的光学中心
+                // 与胶囊中心重合，换字体、换字号都不会变。
                 Text(
-                  '$count',
+                  label,
                   style: TextStyle(
-                    fontSize: 13,
-                    height: pill / s.scale(13),
+                    fontSize: 15,
+                    height: pill / s.scale(15),
                     leadingDistribution: TextLeadingDistribution.even,
                     color: on ? IosColors.ink : IosColors.muted,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                    fontWeight: on ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
-              ],
-            ]),
+                if (count != null) ...[
+                  const SizedBox(width: 5),
+                  Text(
+                    '$count',
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: pill / s.scale(13),
+                      leadingDistribution: TextLeadingDistribution.even,
+                      color: on ? IosColors.ink : IosColors.muted,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ]),
+            ),
           ),
         ),
       ),

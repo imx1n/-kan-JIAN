@@ -217,14 +217,19 @@ class _IosDiscoverPageState extends State<IosDiscoverPage> {
             itemBuilder: (context, i) => SizedBox(
               width: _railWidth,
               child: list == null
-                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Redacted(width: _railWidth, height: coverHeightFor(_railWidth)),
-                      const SizedBox(height: _railGapCover),
-                      // 骨架的尺寸直接取真卡片的常量：数据回来时不该跳一下。
-                      const Redacted(width: 84, height: _railNameSize),
-                      const SizedBox(height: _railGapMeta),
-                      const Redacted(width: 56, height: _railMetaSize),
-                    ])
+                  ? Builder(builder: (context) {
+                      // 骨架的高度要按**缩放后**的字号算，否则系统字号放大时
+                      // 数据一回来整排文字块会突然长高，卡片弹一下。尺寸仍然
+                      // 取真卡片的常量，只是和 [_railExtent] 用同一套折算。
+                      final s = MediaQuery.textScalerOf(context);
+                      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Redacted(width: _railWidth, height: coverHeightFor(_railWidth)),
+                        const SizedBox(height: _railGapCover),
+                        Redacted(width: 84, height: s.scale(_railNameSize)),
+                        const SizedBox(height: _railGapMeta),
+                        Redacted(width: 56, height: s.scale(_railMetaSize)),
+                      ]);
+                    })
                   : Pressable(
                       onTap: () => iosOpenDetail(context, list[i]),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

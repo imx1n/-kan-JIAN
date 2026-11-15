@@ -539,7 +539,16 @@ class _Tile extends StatelessWidget {
           ),
         ),
         const SizedBox(height: CoverCaption.gapNameMeta),
-        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: CoverCaption.metaSize, height: CoverCaption.metaLine, color: IosColors.muted)),
+        // 作者行同样钉死高度：13 × 1.45 = 18.85，而 CJK 回退字体的行框是
+        // 19.0，多出的 0.15 会顶破 `CoverCaption.extent` 算出来的格子高度。
+        // 发现页的网格早就是这个写法，这里之前漏掉了。
+        SizedBox(
+          height: MediaQuery.textScalerOf(context).scale(CoverCaption.metaSize) * CoverCaption.metaLine,
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: CoverCaption.metaSize, height: CoverCaption.metaLine, color: IosColors.muted)),
+          ),
+        ),
       ]),
     );
   }
