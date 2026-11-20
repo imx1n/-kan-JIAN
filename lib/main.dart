@@ -38,9 +38,19 @@ Future<void> main() async {
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   // 预热 Liquid Glass 着色器：只做磁盘到内存的读取，不阻塞首帧。
   // 只有 iOS 用液体玻璃，安卓走毛玻璃，不需要预载着色器。
-  if (Platform.isIOS) await LiquidGlassWidgets.initialize();
+  if (Platform.isIOS) {
+    try {
+      await LiquidGlassWidgets.initialize();
+    } catch (_) {
+      // 老机型 GPU 编不了玻璃着色器时让玻璃退化成实底，别拦死启动。
+    }
+  }
   // 边栏的渐进模糊是同一个库里的独立 shader，两端都在用（顶栏、标签栏），
   // 不预载的话首帧会先退化成均匀模糊、下一帧才变成渐变。
-  await ProgressiveBlur.preload();
+  try {
+    await ProgressiveBlur.preload();
+  } catch (_) {
+    // 预载失败只是首帧退化成均匀模糊，不该影响启动。
+  }
   runApp(const IosApp());
 }
