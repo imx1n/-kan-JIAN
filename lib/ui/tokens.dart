@@ -14,8 +14,8 @@ class Space {
   static const x3 = 12.0;
   static const x4 = 16.0;
   static const x5 = 20.0;
-  static const x6 = 28.0;
-  static const x7 = 36.0;
+  static const x6 = 24.0;
+  static const x7 = 32.0;
 
   /// 全 App 唯一的页面左右外边距。标题、筛选、列表、网格左边缘都落在这一条线。
   static const page = x5;
@@ -24,7 +24,14 @@ class Space {
   static const afterTitle = x2;
 
   /// 区块标题的上沿留白（上一个区块的内容到此结束）。
-  static const beforeSection = x6;
+  ///
+  /// 这一档只在「上一块内容已经贴着字面收尾」时才代表视觉间距——前面那块的
+  /// 盒内空余会叠在它上面。所以筛选行、横排卡片都改成内容多高就多高，
+  /// 区块之间的空白只有一个来源。
+  ///
+  /// 早先写 28，实测「今日更新」前面 39dp、「人气排行」前面 36dp：两个区块
+  /// 标题呼吸不一样，前者还空得能停车。16 + 标题行框自身的 leading 落在 20 上下。
+  static const beforeSection = x4;
 
   /// 区块标题下沿到内容。
   static const afterSection = x3;
@@ -54,4 +61,52 @@ class Dock {
 
   /// 页面内容需要给标签栏让出的高度：标签栏 + 它下面的留白 + 一点呼吸空间。
   static double clearance(BuildContext context) => height + bottom(context) + Space.x4;
+}
+
+/// 滚动边缘模糊带（scroll edge effect）的几何。
+///
+/// 规范来自 iOS 26：Apple 把它定义为「滚动内容与固定控件之间的过渡」，
+/// 并且作用在滚动方向上的**两端**，不只是顶部。所以这里两端都有，只是
+/// **强度不同**——顶部压着状态栏，要够浓；底部是悬浮胶囊，只要一层薄雾。
+///
+/// 两端为什么不同，是有依据的：参考界面逐像素量过，底部白色胶囊只占距底
+/// 36–92dp，胶囊**外侧**的封面、作者名一直到屏幕底边都是清楚的。所以底部
+/// 不能铺全宽、不能拖长——那会平白吃掉一行内容。上一版给了 124dp 全宽带，
+/// 就是「下面很长、很突兀」的来源。
+///
+/// 顶部则确实要探到状态栏下沿：参考图里正文从状态栏下面开始就是清晰的，
+/// 带子不能再往下，否则会压住「书架」「发现」这些大标题。
+class ScrollEdge {
+  ScrollEdge._();
+
+  /// 顶部带高：正好到状态栏下沿。
+  ///
+  /// 不额外铺过渡段——大标题就在状态栏正下方，多出来的每一像素都是拿内容
+  /// 换的。带子内部由 [EdgeBlur] 自己从边缘渐到清楚。
+  static double topHeight(BuildContext context) => MediaQuery.paddingOf(context).top;
+
+  /// 底部带高：从**屏幕底边**一直铺到胶囊上沿再往上 12。
+  ///
+  /// 早先这个值只算了胶囊自身高度 + 20，带子在布局里又是抬到手势区之上
+  /// （`bottom: inset`）放的——两件事一叠加，手势区那一条（约 16dp）压根没有
+  /// 模糊也没有染色，滚动内容滚到那里就直接露在系统栏下面，看起来像底栏
+  /// 下面空了一截。
+  ///
+  /// 现在带子的下沿锚在屏幕底边，高度把「手势区 + 胶囊间距 + 胶囊 + 上探」
+  /// 全算进来，底栏外沿和系统手势区是同一层过渡。
+  static double bottomHeight(BuildContext context) => Dock.bottom(context) + Dock.height + Space.x3;
+
+  /// 顶部模糊强度。状态栏那一条是唯一的过渡，要浓。
+  static const topSigma = 12.0;
+
+  /// 底部模糊强度。比顶部小得多——它只是让胶囊「浮起来」的一层薄雾，
+  /// 不是一条横贯屏幕的遮罩。数值偏小是刻意的：太大就会把胶囊上方的
+  /// 内容糊成一片，读起来像卡顿。
+  static const bottomSigma = 6.0;
+
+  /// 顶部底色浓度。
+  static const topTint = .45;
+
+  /// 底部底色浓度。比顶部淡，理由同上。
+  static const bottomTint = .28;
 }

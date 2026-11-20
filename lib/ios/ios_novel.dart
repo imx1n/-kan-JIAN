@@ -269,19 +269,6 @@ class _IosNovelPageState extends State<IosNovelPage> {
   );
 }
 
-/// 正文段落：首行缩进两字。缩进用占位块而不是全角空格——两端对齐时
-/// Flutter 会把行首空白也拿去分配，多行段落的缩进就没了。
-Widget novelParagraph(String para, TextStyle style) => Text.rich(
-  TextSpan(
-    children: [
-      WidgetSpan(child: SizedBox(width: (style.fontSize ?? 18) * 2)),
-      TextSpan(text: para),
-    ],
-  ),
-  style: style,
-  textAlign: TextAlign.justify,
-);
-
 /// 纸张名称，「阅读设置」里显示当前值用。
 String novelPaperName(int theme) => _Paper.of(theme).name;
 

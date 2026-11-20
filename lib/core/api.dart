@@ -214,8 +214,14 @@ class MangaApi {
         ComicBrief.fromJson,
       );
 
-  Future<ComicDetail> detail(String pathWord) async =>
-      ComicDetail.fromJson(await _get('/api/v3/comic2/$pathWord'));
+  Future<ComicDetail> detail(String pathWord) async {
+    final d = ComicDetail.fromJson(await _get('/api/v3/comic2/$pathWord'));
+    // `results` 是空表或没有作品字段时，源站实际返回的是「这条线路不认识这部作品」，
+    // 不是网络故障。早先这种响应会让详情页显示一句 Dart 类型错误；现在直接当
+    // 空数据处理，交给界面说人话。
+    if (d.comic.pathWord.isEmpty) throw const ApiException('这条线路没有这部作品的详情');
+    return d;
+  }
 
   Future<PageResult<Chapter>> chapters(
     String pathWord,
@@ -277,8 +283,6 @@ class MangaApi {
     }
     throw lastFailure is ApiException ? lastFailure : const ApiException('登录失败');
   }
-
-  Future<Map<String, dynamic>> memberInfo(String token) => _get('/api/v3/member/info', const {}, token);
 
   /// 源站书架（漫画）。
   Future<PageResult<RemoteComic>> collectedComics(String token, {int offset = 0, int limit = 50}) async =>

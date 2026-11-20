@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/store.dart';
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show Space;
 import 'ios_novel.dart' show novelPaperName, showNovelAppearance;
 import '../reader/page_fit.dart';
 import 'ios_theme.dart';
@@ -75,8 +76,26 @@ class IosAppearancePage extends StatelessWidget {
           onTap: () => GlassScope.set(!p.reduceTransparency),
         ),
       ]),
+      InsetGroup(
+        title: '封面',
+        footer: '关闭后所有封面按原图显示，加载更快，也不改原作画风。',
+        children: [
+          IosRow(
+            icon: 'book',
+            title: '自定义封面效果',
+            subtitle: '书脊折痕、暗角、覆光与纸纹。默认关闭，关闭时封面就是原图。',
+            chevron: false,
+            valueWidget: AppSwitch(value: p.coverFrame, onChanged: _setCoverFrame),
+            onTap: () => _setCoverFrame(!p.coverFrame),
+          ),
+        ],
+      ),
     ]);
   }
+}
+
+void _setCoverFrame(bool v) {
+  ReaderPrefs.instance.coverFrame = v;
 }
 
 /// 深色模式：跟随系统 / 浅色 / 深色。小说纸张单独在阅读设置里调。
@@ -88,7 +107,9 @@ class IosThemePage extends StatelessWidget {
     final p = ReaderPrefs.instance;
     return SettingsPage(title: '深色模式', children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
+        // 下边距交给下面的 [InsetGroup]（它会补 beforeSection），这里只留
+        // 预览和导航栏之间的呼吸。18 / 26 这种数不在 4/8/12/16/24/32 阶梯上。
+        padding: const EdgeInsets.fromLTRB(Space.page, Space.x4, Space.page, 0),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           _PhonePreview(dark: false, onTap: () => p.appearance = 1),
           const SizedBox(width: 28),

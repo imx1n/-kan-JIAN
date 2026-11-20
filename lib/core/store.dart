@@ -438,6 +438,9 @@ class ReaderPrefs extends ChangeNotifier {
     'novelPaged': true,
     'reduceTransparency': false,
     'appearance': 0,
+    // 封面书本框：书脊折痕、暗角、覆光、颗粒。默认关闭——关闭时封面就是原图，
+    // 加载更快，也不改原作画风。开关在「我的 → 外观」。
+    'coverFrame': false,
     // 线路：0 自动，1 固定线路，2 自定义基址。
     'apiMode': 0,
     'apiRoute': 'hotmangas',
@@ -636,6 +639,8 @@ class ReaderPrefs extends ChangeNotifier {
 
   bool get reduceTransparency => _get('reduceTransparency');
   set reduceTransparency(bool v) => _set('reduceTransparency', v);
+  bool get coverFrame => _get('coverFrame');
+  set coverFrame(bool v) => _set('coverFrame', v);
 
   List<String> get searchHistory {
     final raw = _get<String>('searchHistory');

@@ -11,6 +11,14 @@ List<Map<String, dynamic>> _maps(Object? v) => v is List
     ? v.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
     : const [];
 
+/// 取一个子对象，缺字段或类型不对时给空表。
+///
+/// 早先这几处直接写 `as Map`，源站少给字段时（作品下架、付费章节、线路返回
+/// 降级数据）`null as Map` 抛的是「Null is not a subtype of type Map in type
+/// cast」——这句话会原样显示在详情页上，读者看到的是一个 Dart 类型错误。
+/// 缺字段就当成空对象，由调用方用自己的兜底数据顶上。
+Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : const {};
+
 class PageResult<T> {
   const PageResult({
     required this.list,
@@ -97,7 +105,7 @@ class RankItem {
       sort: sort,
       rise: last == 0 ? 0 : last - sort,
       isNew: last == 0,
-      comic: ComicBrief.fromJson(Map<String, dynamic>.from(j['comic'] as Map)),
+      comic: ComicBrief.fromJson(_map(j['comic'] is Map ? j['comic'] : j)),
     );
   }
 }
@@ -149,7 +157,9 @@ class ComicDetail {
       .toList();
 
   factory ComicDetail.fromJson(Map<String, dynamic> r) {
-    final c = Map<String, dynamic>.from(r['comic'] as Map);
+    // 详情里作品字段偶尔不在 `comic` 下面，而是平铺在 results 上（线路降级时见过）。
+    // 两种都给上，谁在就解析谁。
+    final c = _map(r['comic'] is Map ? r['comic'] : r);
     // groups 是字典而不是数组：{"default": {...}, "tankobon": {...}}
     final rawGroups = r['groups'];
     final groups = <ComicGroup>[
@@ -246,7 +256,7 @@ class ChapterContent {
   final bool isLock;
 
   factory ChapterContent.fromJson(Map<String, dynamic> r) {
-    final ch = Map<String, dynamic>.from(r['chapter'] as Map);
+    final ch = _map(r['chapter'] is Map ? r['chapter'] : r);
     return ChapterContent(
       chapter: Chapter.fromJson(ch),
       images: _maps(ch['contents']).map((c) => _str(c['url'])).where((u) => u.isNotEmpty).toList(),

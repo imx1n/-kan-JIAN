@@ -5,9 +5,11 @@ import '../core/api.dart';
 import '../core/chapter_browser.dart';
 import '../core/models.dart';
 import '../core/store.dart';
+import '../ui/edge_blur.dart';
 import '../ui/format.dart' show formatPopular;
 import '../ui/icons.dart';
 import '../ui/motion.dart';
+import '../ui/tokens.dart' show ScrollEdge;
 import '../ui/widgets.dart' show CoverImage, coverHeightFor, revealChapterRow;
 import 'ios_app.dart';
 import 'ios_discover.dart' show IosNetworkError;
@@ -149,18 +151,23 @@ class _IosDetailPageState extends State<IosDetailPage> {
             const SliverToBoxAdapter(child: SizedBox(height: 120)),
           ]),
         ),
-        // 顶部渐隐 + 玻璃按钮
+        // 顶部渐进式模糊 + 玻璃按钮。和书架 / 发现共用同一套 [EdgeBlur]：
+        // 单通道 backdrop shader，从边缘深处向带子内沿渐弱到 0，不会像叠
+        // 多层 BackdropFilter 那样在层间留台阶。
+        //
+        // 这里比首页那两条带子浓一档（tint .6 对 .45）：首页大标题会随内容
+        // 滚走，压在带子底下的只有封面；详情页的「作品详情」是个常驻标题，
+        // 底下一直有封面和正文在走，底色太淡标题就会糊进插图里。
         Positioned(
           left: 0,
           right: 0,
           top: 0,
-          height: top + 64,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [IosColors.bg, IosColors.bg.withValues(alpha: .85), IosColors.bg.withValues(alpha: 0)], stops: const [0, .7, 1]),
-              ),
-            ),
+          child: EdgeBlur(
+            height: top + 64,
+            sigma: ScrollEdge.topSigma,
+            tint: IosColors.bg,
+            tintAlpha: .6,
+            reduce: GlassScope.reduced(context),
           ),
         ),
         Positioned(
@@ -172,6 +179,22 @@ class _IosDetailPageState extends State<IosDetailPage> {
             Expanded(child: Text('作品详情', textAlign: TextAlign.center, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: IosColors.ink))),
             GlassButton(icon: 'ellipsis', label: '更多操作', onTap: _detail == null ? null : _menu),
           ]),
+        ),
+        // 底部同样要一条，锚在屏幕底边——「开始阅读」那颗胶囊是悬浮控件，
+        // 它外侧的内容滚到系统手势区时，得有一层薄过渡，否则会硬切。
+        // 力度沿用底部那套小值（6.0 / .28），它只是让胶囊浮起来，不是遮罩。
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: EdgeBlur(
+            height: ScrollEdge.bottomHeight(context),
+            sigma: ScrollEdge.bottomSigma,
+            side: EdgeBlurSide.bottom,
+            tint: IosColors.bg,
+            tintAlpha: ScrollEdge.bottomTint,
+            reduce: GlassScope.reduced(context),
+          ),
         ),
         if (d != null) _resumeBar(entry, d.isLock),
       ]),
